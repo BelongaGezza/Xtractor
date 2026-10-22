@@ -1,6 +1,10 @@
 # Xtractor — Product Specification
 
-Version: 0.1 (draft) · Date: 2026-10-22 · Status: Ready for development planning
+Version: 0.2 · Date: 2026-10-22 · Status: Ready for development (packaging spike pending)
+
+**Changelog**
+- v0.2 (2026-10-22): folded in plan resolutions S1–S14 (docs/DEVELOPMENT_PLAN.md section 0); removed the lowercase `xtractor` alias; added exit 130 and redefined exit 5; deliverable is now a single self-contained arm64 macOS binary with embedded minimal LGPL ffmpeg and a bundled JS runtime (reverses OQ2); added `--self-update` and the distribution plan (section 9).
+- v0.1 (2026-10-22): initial draft.
 
 ## 1. Purpose
 
@@ -12,7 +16,8 @@ YouTube's Terms of Service restrict downloading content without permission. Xtra
 ### Non-goals (v1)
 - GUI, web service, or browser extension
 - Non-YouTube sites (the architecture should not preclude them later)
-- Playlist/channel bulk download (v1 rejects playlist URLs with a clear message unless `--no-playlist` semantics apply; see 5.6)
+- Playlist/channel bulk download (v1 downloads only the single video of a `watch?v=…&list=…` URL and rejects bare playlist/channel URLs with exit 2; see CLI rule 6)
+- Intel macOS, Linux and Windows binaries (the v1 deliverable is arm64 macOS only)
 - Editing, trimming, subtitles, thumbnails (candidates for v2)
 - Circumventing DRM, paywalls, age/region gates, or authentication
 
@@ -42,6 +47,7 @@ What YouTube actually serves (as exposed by yt-dlp):
 - Source audio is lossy, so output above 48 kHz or "lossless" output adds no real fidelity.
 
 **Default: 44,100 Hz, M4A (AAC-LC).** Rationale: it matches the native stream, so the default path can stream-copy without re-encoding or resampling (no quality loss, fastest), it is the music/consumer standard, and M4A plays everywhere.
+**Copy rule (S2):** the selector prefers an AAC stream whose sample rate equals the target. Stream-copy happens only when the source rate equals the target and no `--audio-quality` was given. If no such stream exists (YouTube sometimes serves only 48 kHz AAC), Xtractor transcodes to AAC with resampling and says so on stderr; this is a notice, not an error.
 **Alternates via `--sample-rate`:** 22050, 32000, 44100, 48000, 88200, 96000. Rates above 48000 are accepted but print a warning that the source is ≤48 kHz and the result is upsampled. Any other value is rejected with the list of valid values.
 
 ### 3.2 Audio formats
@@ -49,11 +55,13 @@ What YouTube actually serves (as exposed by yt-dlp):
 |---|---|---|
 | `m4a` (default) | AAC-LC | Native YouTube stream; copy when no rate/bitrate override |
 | `mp3` | MP3 (libmp3lame) | Maximum compatibility; always a transcode |
-| `opus` | Opus in .opus/Ogg | Best quality per bit; native 48 kHz, so `--sample-rate` is fixed to 48000 (other values error) |
+| `opus` | Opus in .opus/Ogg | Best quality per bit; native 48 kHz. The resolved rate is 48000; an explicit `--sample-rate` other than 48000 is a usage error (exit 2) |
 | `flac` | FLAC | Lossless container for editing; file is large but source is still lossy — warn once |
 | `wav` | PCM 16-bit | For DAWs; large files |
 
-`--audio-quality` takes a bitrate for lossy targets (`128k` default, `192k`, `256k`, `320k`). It is ignored with a notice for flac/wav.
+`--audio-quality` takes a bitrate matching `^\d{2,3}k$` for lossy targets (e.g. `192k`, `256k`, `320k`). It has **no parser default** (S1): when omitted, lossy transcodes use 128k and m4a may be stream-copied; an explicit value on m4a forces a transcode. It is ignored with a notice for flac/wav.
+
+**Sample-rate resolution (S3, closes OQ3):** `--sample-rate` has no parser default; the resolved rate is 44100, except opus which is 48000.
 
 ### 3.3 Video formats
 YouTube serves video and audio separately above 360p (DASH), so a download means fetch best video-only + best audio-only and mux with ffmpeg.
@@ -63,26 +71,28 @@ YouTube serves video and audio separately above 360p (DASH), so a download means
 **Default: MP4 container, H.264 video + AAC audio, best available up to 1080p.** Rationale: universal compatibility, stream-copy mux (no re-encode, fast, lossless relative to source).
 **Alternates:**
 - `--video-format mp4|mkv|webm` (default `mp4`)
-- `--resolution` `360|480|720|1080|1440|2160|best` (default `1080`). If the requested height is unavailable in the chosen format, pick the highest below it and say so. Requesting >1080 with `mp4` auto-selects the best available codec (VP9/AV1) and switches the container to `mkv` (announced on stderr) unless `--strict-format` is given, in which case it fails.
+- `--resolution` `360|480|720|1080|1440|2160|best` (default `1080`). If the requested height is unavailable in the chosen format, pick the highest below it and say so. Requesting >1080 (or `best` when the best is >1080) with `mp4` auto-selects the best available codec (VP9/AV1) and switches the container to `mkv` (announced on stderr) unless `--strict-format` is given, in which case it fails with exit 6. Because this depends on the available streams, the decision is made after probing, not at argument time (S10).
+- `webm` (S11) is restricted to VP9/AV1 video + Opus audio. If no such stream exists at or below the height, `--strict-format` gives exit 6; otherwise the container falls back to `mkv` with an announcement.
 - `--codec` is out of scope for v1; codec follows the format/resolution rules above.
 
 ## 4. Command-line interface
 
-Executable name: **`Xtractor`** (exact case). Also installable under alias `xtractor` on case-sensitive systems.
+Executable name: **`Xtractor`** (exact case), the only one shipped (S4). On the default case-insensitive APFS, `xtractor` already resolves to it; Linux users can define a shell alias. No lowercase alias is packaged because it would overwrite the real script on case-insensitive filesystems.
 
 ```
 Usage: Xtractor [OPTIONS] URL
 
 Extract the audio or video track from a YouTube video.
 
-Mode (exactly one required):
+Mode (exactly one required, except for --list-formats / --self-update / --version / -h):
   -a, --audio              Extract audio only
   -v, --video              Download video (with audio)
 
 Audio options (with -a):
-      --sample-rate HZ     22050|32000|44100|48000|88200|96000  [default: 44100]
+      --sample-rate HZ     22050|32000|44100|48000|88200|96000  [default: 44100; 48000 for opus]
       --audio-format FMT   m4a|mp3|opus|flac|wav               [default: m4a]
-      --audio-quality BR   Bitrate for lossy formats, e.g. 192k [default: 128k]
+      --audio-quality BR   Bitrate for lossy formats, e.g. 192k [default: 128k for transcoded
+                           lossy output; m4a is stream-copied when omitted]
 
 Video options (with -v):
       --resolution RES     360|480|720|1080|1440|2160|best     [default: 1080]
@@ -92,13 +102,17 @@ Video options (with -v):
 General:
   -o, --output PATH        Output directory, or full file path [default: current dir]
   -n, --name TEMPLATE      Filename template [default: "%(title)s"]
-      --overwrite          Replace existing file (default: skip and exit 0 with notice)
+      --overwrite          Replace existing file (default: skip, print its path, exit 0)
   -q, --quiet              Errors only
-      --verbose            Debug detail including underlying tool commands
-      --list-formats       Show available streams for URL and exit
-      --no-playlist        Treat URL with list= parameter as the single video (default behaviour)
-      --version            Print version and exit
+      --verbose            Debug detail including underlying tool commands (not with -q)
+      --list-formats       Show available streams for URL (table on stdout) and exit
+      --no-playlist        Accepted no-op: single-video handling is already the default
+      --self-update        Update the Xtractor binary from the latest GitHub release and exit
+      --version            Print version (and bundled yt-dlp/ffmpeg/JS runtime versions) and exit
   -h, --help               Show this help and exit
+
+Exit codes: 0 ok, 1 internal, 2 usage, 3 unavailable, 4 network, 5 bundled tool missing,
+            6 format unsatisfiable, 7 filesystem, 130 interrupted.
 
 Examples:
   Xtractor -a https://youtu.be/VIDEOID
@@ -108,12 +122,14 @@ Examples:
 
 ### CLI rules
 1. `-h`/`--help` prints the above (accurate to the implemented options, auto-generated from the parser so it cannot drift), exit 0, works with no network and no ffmpeg present.
-2. Exactly one of `-a` / `-v`. Neither or both → usage error, exit 2.
+2. Exactly one of `-a` / `-v` for download mode. Neither or both → usage error, exit 2. `--list-formats` (S7) is an informational mode: it needs only a URL, requires no mode flag, prints its table to stdout, produces no file, needs no ffmpeg and exits 0. `--self-update`, `--version` and `-h` likewise need no mode or URL.
 3. Audio options with `-v` (or video options with `-a`) → usage error naming the offending flag.
 4. URL validation: accept `youtube.com/watch?v=`, `youtu.be/`, `youtube.com/shorts/`, `m.youtube.com`, `music.youtube.com`, `youtube.com/live/`. Reject non-YouTube hosts and malformed URLs before any network call. Strip tracking params.
-5. Output path: a directory or a file path; the extension is derived from the format (a conflicting user extension is an error). Filenames are sanitised for macOS/Linux/Windows.
-6. Playlist: a URL containing `list=` downloads only the single video identified by `v=`. A bare playlist URL (no video) exits 2 with "playlists are not supported in v1".
-7. Progress: a single-line progress bar (percent, size, speed, ETA) on a TTY; plain periodic lines otherwise; nothing with `-q`. Progress goes to stderr; the final saved path is the **only** line printed to stdout so output can be piped (`$(Xtractor -a URL)`).
+5. Output path (S6): `-o` is a directory if it exists as one, ends in a path separator, or has no extension; otherwise it is a full file path. A file path's extension must match the chosen format, else exit 2. `-o` as a file path combined with `-n` is exit 2. Filenames are sanitised for macOS/Linux/Windows.
+6. Playlist (S14): a URL with `watch?v=X&list=Y` downloads only video X. `playlist?list=`, `/channel/…` and `/@handle` URLs exit 2 ("playlists are not supported in v1"). Both are pure URL-parse decisions made before any network call. `--no-playlist` is an accepted no-op.
+7. Progress: a single-line progress bar (percent, size, speed, ETA) on a TTY; plain periodic lines otherwise; nothing with `-q`. In download mode, progress goes to stderr and the final saved path is the **only** line on stdout so output can be piped (`$(Xtractor -a URL)`). If the file already exists and `--overwrite` is not given (S5), the existing path is still printed to stdout, "exists, skipping" goes to stderr, exit 0.
+8. `-q` together with `--verbose` is a usage error, exit 2 (S9).
+9. Metadata (S13): best effort via ffmpeg `-metadata` (title, artist, date, comment/purl = source URL). WAV gets INFO tags where ffmpeg supports them. Missing tag support never fails the run.
 
 ### Exit codes
 | Code | Meaning |
@@ -123,9 +139,10 @@ Examples:
 | 2 | Usage error / invalid arguments |
 | 3 | Video unavailable (private, removed, region/age-blocked, DRM, live-not-ended) |
 | 4 | Network error after retries |
-| 5 | Missing dependency (ffmpeg) |
-| 6 | Requested format/resolution cannot be satisfied (with `--strict-format`) |
+| 5 | Bundled or located dependency missing or corrupt (embedded/`$PATH` ffmpeg or ffprobe, JS runtime) and could not be (re)extracted |
+| 6 | Requested format/resolution cannot be satisfied (with `--strict-format`, or no stream at all satisfies webm/height rules) |
 | 7 | File system error (permissions, disk full) |
+| 130 | Interrupted (Ctrl-C / SIGTERM, S8); no partial files remain |
 
 ## 5. Functional requirements
 
@@ -143,15 +160,21 @@ Examples:
 | F10 | Clean Ctrl-C handling (exit 130, no partial files left) | Must |
 | F11 | Config file (`~/.config/xtractor/config.toml`) for default overrides; CLI wins | Could |
 | F12 | Shell completions (zsh/bash) | Could |
+| F13 | `--self-update`: replace the binary with the latest GitHub release after verifying its SHA-256 | Should |
+| F14 | Single self-contained arm64 macOS binary with embedded ffmpeg and JS runtime (section 6, 9) | Must |
 
 ## 6. Non-functional requirements
 
-- **Platforms:** macOS (primary, Apple Silicon + Intel), Linux; Windows best-effort.
+- **Platforms:** the v1 deliverable is **macOS on Apple Silicon (arm64) only**. Intel Macs, Linux and Windows are out of scope for the binary; the Python source remains portable and installable with `pipx` for developers.
 - **Build, don't rebuild:** use the maintained open-source **yt-dlp** for stream extraction (YouTube changes its delivery frequently; reimplementing extraction is not viable) and **ffmpeg** for muxing/transcoding/resampling. Xtractor is the opinionated, simple front end with the defaults and validation above.
-- **Dependency handling:** detect ffmpeg at startup of download operations (not for `-h`/`--version`); on absence print a platform-specific install hint (`brew install ffmpeg`) and exit 5. yt-dlp is a pinned Python dependency with a documented upgrade path; extraction failures that look like stale-extractor issues suggest updating it.
-- **Language / packaging (recommendation, engineer to confirm in plan):** Python ≥3.10, `pyproject.toml`, console-script entry point `Xtractor`, installable via `pipx install .`; consider Homebrew formula later.
+- **Single self-contained binary (reverses OQ2):** the deliverable is one arm64 Mach-O executable built with **PyInstaller `--onefile`** (Nuitka is the alternative if the spike shows unacceptable startup or size). It embeds Python, yt-dlp (`yt-dlp[default]`, which brings the `yt-dlp-ejs` component that PyPI yt-dlp otherwise lacks), a **minimal LGPL ffmpeg/ffprobe** and a **JS runtime**.
+  - *ffmpeg:* custom build without `--enable-gpl` / `--enable-nonfree`; encoders/decoders limited to aac, libmp3lame, libopus, flac, pcm; muxers limited to mp4, matroska, webm, ogg, wav (plus matching demuxers/protocols needed for local files). Embedded in the binary and extracted on first run to `~/Library/Caches/Xtractor/<version>-<sha8>/`, verified by hash on each start. An `ffmpeg` found on `$PATH` is preferred when present (and recent enough: it must provide the encoders above, else fall back to the embedded one). LGPL obligations (licence text, source offer, dynamic-replaceability via the `$PATH` override) are documented in the README.
+  - *JS runtime:* since 2025.11.12 yt-dlp needs an external JavaScript runtime to solve YouTube challenges. Supported: deno >= 2.3 (default/recommended), node >= 22, quickjs/quickjs-ng (slow, can take minutes, and unsandboxed), bun (deprecated). The runtime is a **build parameter** (`JS_RUNTIME=deno|quickjs-ng`): **deno preferred, quickjs-ng fallback**, final choice decided by the packaging spike (docs/SPIKE_PACKAGING.md) on size, speed and signing behaviour. It is embedded and extracted to the same cache directory and passed to yt-dlp explicitly; a user-installed runtime on `$PATH` is not required.
+- **Dependency handling:** locate/extract ffmpeg and the JS runtime at the start of download operations (not for `-h`/`--version`/`--list-formats` where not needed); if missing or corrupt and re-extraction fails, print an actionable message and exit 5. yt-dlp is updated by releasing a new Xtractor build (and `--self-update`); extraction failures that look like stale-extractor issues suggest running `Xtractor --self-update` (S12; for source installs `pipx upgrade Xtractor`).
+- **Language / packaging:** Python >=3.10 (3.12 for the binary), `pyproject.toml` (hatchling, src layout), single console-script `Xtractor`, dependency `yt-dlp[default]>=<release current at implementation time>` with no upper cap (S12); CI keeps a lock for reproducibility plus a scheduled "latest yt-dlp" job.
+- **Startup and size budgets (targets, to be confirmed by the spike):** `Xtractor -h` and `--version` cold start <= 1.5 s, warm <= 0.5 s on an M-series Mac (the `--onefile` unpack cost; fall back to `--onedir`-inside-tarball or Nuitka if exceeded); binary <= 120 MB with deno (<= 70 MB with quickjs-ng).
 - **Performance:** no added overhead beyond the underlying download; default audio path involves no re-encode.
-- **Security:** never shell out with unsanitised strings (argument lists only); no credentials or cookies handled in v1; no telemetry.
+- **Security:** never shell out with unsanitised strings (argument lists only); no credentials or cookies handled in v1; no telemetry. The only network access besides YouTube is `--self-update`, which contacts GitHub releases only when the user runs it, over HTTPS, and verifies a SHA-256 checksum before replacing the binary.
 - **Testing:** unit tests for argument validation, URL parsing, format selection logic, filename sanitising; integration tests with yt-dlp/ffmpeg mocked; a small opt-in live smoke test against a public-domain / Creative Commons video, excluded from default CI.
 - **Quality bar:** type-checked, linted, ≥85% line coverage on non-I/O logic; `README` with install, usage and troubleshooting.
 
@@ -168,8 +191,23 @@ Examples:
 9. stdout contains only the output path on success.
 10. Ctrl-C mid-download leaves no temp/partial files.
 
-## 8. Open questions (to resolve in the plan, defaults noted)
-1. Distribution: pipx from git only for v1 (default) vs. PyPI/Homebrew.
-2. Bundle ffmpeg or require it installed (default: require installed).
-3. Whether `--sample-rate` should default per format (e.g. 48 kHz for opus/wav) — default: single global default 44100, except opus fixed at 48000.
-4. Windows support level (default: best-effort, not CI-gated).
+11. `Xtractor --self-update` on a build older than the latest release replaces the binary atomically after SHA-256 verification; a checksum mismatch aborts with the old binary intact; `Xtractor --version` then shows the new version.
+12. On a clean arm64 Mac with no Homebrew, Python, ffmpeg or Node/deno installed, `Xtractor -a <url>` succeeds (first run extracts tools to `~/Library/Caches/Xtractor/`), and the notarized (or ad-hoc signed) binary launches without Gatekeeper blocking when installed via `curl` or Homebrew.
+
+## 8. Decisions and open questions
+Resolved:
+- OQ1 Distribution: GitHub release tarball + Homebrew tap (section 9); PyPI optional.
+- OQ2 Bundle ffmpeg: **yes** (minimal LGPL build, embedded; `$PATH` ffmpeg preferred). Reverses v0.1.
+- OQ3 Sample-rate default: global 44100, opus 48000 (S3).
+- OQ4 Windows/Linux: out of scope for the binary; source remains portable, not CI-gated.
+
+Pending:
+- **P1 (user decision):** Apple Developer ID (US$99/yr) for notarization. Without it, ad-hoc signing only (see 9).
+- **P2 (spike):** JS runtime = deno vs quickjs-ng; `--onefile` vs Nuitka vs `--onedir` based on measured startup/size (docs/SPIKE_PACKAGING.md).
+
+## 9. Distribution
+1. **Primary:** a GitHub release containing `Xtractor-<version>-macos-arm64.tar.gz` (the binary, LICENSE, THIRD_PARTY_NOTICES with ffmpeg LGPL source offer) and `SHA256SUMS`. The binary is signed with a Developer ID Application certificate with hardened runtime and **notarized** (stapling is not possible for a bare Mach-O; staple is applied only if shipped in a pkg/dmg, otherwise Gatekeeper checks the ticket online). Requires an Apple Developer ID, US$99/yr — **a user decision (P1)**.
+2. **Homebrew tap** (`<owner>/homebrew-xtractor`): formula downloads the release tarball, verifies the sha256, installs `Xtractor`. `brew upgrade` is the update path for brew users (`--self-update` detects a Homebrew-managed path and refuses, pointing to `brew upgrade`; exit 2).
+3. **No-cost fallback:** ad-hoc signing (`codesign -s -`), which is the minimum for arm64 binaries to run at all. Users must clear quarantine or approve via System Settings (Privacy & Security); documented in the README.
+4. **Gatekeeper/quarantine behaviour:** files downloaded with a browser get the `com.apple.quarantine` attribute, so an un-notarized binary is blocked ("cannot be opened because the developer cannot be verified") and needs `xattr -d com.apple.quarantine` or manual approval; a notarized one opens. Files fetched with `curl`/`wget`, or installed by Homebrew, are not quarantined and run even when only ad-hoc signed. `--self-update` downloads via the tool itself (no quarantine attribute) and verifies the checksum.
+5. **`--self-update`:** queries the latest release via the GitHub releases API, compares versions, downloads the tarball and `SHA256SUMS`, verifies the SHA-256, extracts to a temp file beside the running binary, re-applies no quarantine, and atomically replaces it (`os.replace`). Network failure: exit 4; checksum mismatch or corrupt archive: exit 1, old binary untouched; non-writable install location: exit 7. "Already up to date" exits 0. Prints the new version to stdout.
