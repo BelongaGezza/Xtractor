@@ -57,6 +57,7 @@ log "building Opus $OPUS_VERSION (static)"
 log "configuring ffmpeg $FFMPEG_VERSION"
 # Keep this list in sync with docs/BUILD_NOTES.md and THIRD_PARTY_NOTICES (LGPL source offer).
 CONFIGURE_FLAGS=(
+  --prefix=/usr/local  # never installed; fixed so the recorded configure line carries no build path
   --cc=clang --arch=arm64 --target-os=darwin
   --disable-everything --disable-autodetect --disable-doc --disable-debug --disable-network
   --disable-ffplay --enable-ffmpeg --enable-ffprobe --disable-shared --enable-static
@@ -75,7 +76,7 @@ mkdir -p "$WORK/ffobj"
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
 # Only static archives exist in $PREFIX, so the linker cannot pick a dylib.
 ( cd "$WORK/ffobj" \
-  && "../ffmpeg-$FFMPEG_VERSION/configure" --prefix="$WORK/install" "${CONFIGURE_FLAGS[@]}" \
+  && "../ffmpeg-$FFMPEG_VERSION/configure" "${CONFIGURE_FLAGS[@]}" \
        >"$WORK/ffconfigure.log" 2>&1 ) || { tail -30 "$WORK/ffconfigure.log" >&2; die "ffmpeg configure failed"; }
 grep -q "^License: LGPL" "$WORK/ffconfigure.log" || die "configure did not report an LGPL licence"
 

@@ -31,7 +31,7 @@ hidden = [
     "yt_dlp.compat._deprecated",
     "yt_dlp.utils._legacy",
     "yt_dlp.utils._deprecated",
-    *collect_submodules("yt_dlp"),
+    *collect_submodules("yt_dlp", filter=lambda name: "__pyinstaller" not in name),
     *ejs_hidden,
 ]
 
@@ -93,12 +93,14 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)  # noqa: F821
 
+ONEDIR = os.environ.get("XTRACTOR_ONEDIR") == "1"  # measurement/fallback layout (BUILD_NOTES.md)
+
 exe = EXE(  # noqa: F821
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
+    *([] if ONEDIR else [a.binaries, a.datas]),
     [],
+    exclude_binaries=ONEDIR,
     name="Xtractor",
     debug=False,
     bootloader_ignore_signals=False,
@@ -109,3 +111,6 @@ exe = EXE(  # noqa: F821
     codesign_identity=None,  # signing is done by scripts/sign.sh (ad hoc, Developer ID later)
     entitlements_file=None,
 )
+
+if ONEDIR:
+    coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="Xtractor")  # noqa: F821
