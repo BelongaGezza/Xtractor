@@ -159,8 +159,7 @@ With `PATH` containing only `/usr/bin:/bin` (no ffmpeg, node or deno on it), thi
 duration=596.544`, byte-identical to the download made from the unfrozen venv, with the `Lavf63.1.102` encoder tag.
 `--selftest` also exec'd the bundled `ffmpeg -version`, `ffprobe -version`, `qjs --help` and `deno --version`
 from `_MEIPASS`. The deno onefile variant with `--cache-extract` (tools copied to
-`~/Library/Caches/Xtractor-spike`) also downloaded and verified OK. (The cache dir is left in place; delete it
-if tidy-up is wanted.)
+`~/Library/Caches/Xtractor-spike`) also downloaded and verified OK. (That cache dir was deleted afterwards.)
 
 Gotcha: `fixup: 'force'` makes yt-dlp run `ffmpeg -c copy` on DASH m4a. By default (`detect_or_warn`)
 it only runs when a defect is detected, so a plain audio download may not touch ffmpeg at all.
@@ -315,5 +314,4 @@ yt-dlp (the app needs an update channel anyway).
 
 `/private/tmp/claude-501/-Users-gerry-develop-Xtractor/3cb84c58-c938-4183-87c7-730be5683657/scratchpad/spike/`:
 `venv/`, `probe.py`, `xprobe.py`, `fftest.sh`, `rt/{deno,node,qjs}`, `bin/{ffmpeg,ffprobe}`,
-`ffbuild/configure.sh`, `dist_qjs/`, `dist_deno/`. A leftover cache dir `~/Library/Caches/Xtractor-spike/` holds a deno
-and an ffmpeg copy (about 87 MB) from the cache-extract test.
+`ffbuild/configure.sh`, `dist_qjs/`, `dist_deno/`.
