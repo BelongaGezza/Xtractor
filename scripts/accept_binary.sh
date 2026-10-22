@@ -57,7 +57,10 @@ run_x -h
 echo "[2] --version"
 run_x --version
 WANT="Xtractor $(app_version)"
-[ $RC -eq 0 ] && [ "$OUT" = "$WANT" ] && ok "--version prints '$OUT'" || bad "--version: rc=$RC out='$OUT' want='$WANT'"
+if [ $RC -eq 0 ] && [ "$(head -1 <<<"$OUT")" = "$WANT" ] && grep -q '^yt-dlp ' <<<"$OUT" \
+   && grep -q '^ffmpeg ' <<<"$OUT" && grep -q -E '^(quickjs|deno) ' <<<"$OUT"; then
+  ok "--version prints Xtractor, yt-dlp, ffmpeg and JS runtime versions"
+else bad "--version: rc=$RC out='$OUT' want first line '$WANT' plus tool versions"; fi
 
 echo "[3] -a (default m4a, 44100 Hz, stream copy)"
 mkdir -p "$WORK/a"

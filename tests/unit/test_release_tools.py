@@ -73,3 +73,73 @@ def test_tarball_is_flat_and_reproducible(tmp_path: Path) -> None:
         extracted = tf.extractfile(member)
         assert extracted is not None
         assert extracted.read() == b"binary"
+
+
+# --- release scripts ---------------------------------------------------------------------
+def _script(name: str) -> str:
+    import pathlib
+
+    return str(pathlib.Path(__file__).resolve().parents[2] / name)
+
+
+def test_update_formula_rejects_hostile_versions(tmp_path: Path) -> None:
+    import shutil
+    import subprocess
+
+    UPDATE = _script("packaging/homebrew/update_formula.sh")
+    (tmp_path / "t").write_bytes(b"x")
+    formula = tmp_path / "f.rb"
+    shutil.copy(_script("packaging/homebrew/xtractor.rb"), formula)
+    for bad in ('1.0.0";system "id";"', "1.0", "1.0.0-rc.1", "1.0.0 "):
+        r = subprocess.run(
+            [
+                _script("packaging/homebrew/update_formula.sh"),
+                bad,
+                str(tmp_path / "t"),
+                str(formula),
+            ],
+            capture_output=True,
+            check=False,
+        )
+        assert r.returncode == 2, bad
+    ok = subprocess.run(
+        [
+            _script("packaging/homebrew/update_formula.sh"),
+            "v1.2.3",
+            str(tmp_path / "t"),
+            str(formula),
+        ],
+        capture_output=True,
+        check=False,
+    )
+    assert ok.returncode == 0
+
+
+def test_sign_release_script_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import base64
+    import importlib.util
+
+    from xtractor import _ed25519, selfupdate
+
+    seed = bytes(range(7, 39))
+    monkeypatch.setattr(selfupdate, "TRUSTED_PUBLIC_KEYS", (_ed25519.public_key(seed).hex(),))
+    spec = importlib.util.spec_from_file_location(
+        "sign_release", _script("scripts/sign_release.py")
+    )
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    sums = tmp_path / "SHA256SUMS"
+    sums.write_text("abc  x.tar.gz\n")
+    monkeypatch.delenv("XTRACTOR_SIGNING_KEY", raising=False)
+    assert mod.main([str(sums)]) == 1  # no key
+    monkeypatch.setenv("XTRACTOR_SIGNING_KEY", "!!!")
+    assert mod.main([str(sums)]) == 1
+    monkeypatch.setenv("XTRACTOR_SIGNING_KEY", base64.b64encode(b"short").decode())
+    assert mod.main([str(sums)]) == 1
+    monkeypatch.setenv("XTRACTOR_SIGNING_KEY", base64.b64encode(bytes(32)).decode())
+    assert mod.main([str(sums)]) == 1  # key not among the trusted ones
+    monkeypatch.setenv("XTRACTOR_SIGNING_KEY", base64.b64encode(seed).decode())
+    assert mod.main([str(sums)]) == 0
+    sig = (tmp_path / "SHA256SUMS.sig").read_bytes()
+    assert selfupdate.verify_signature(sums.read_bytes(), sig)

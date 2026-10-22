@@ -40,11 +40,14 @@ Network protocols stay disabled (no ffmpeg-side HLS/DASH download, so live strea
   every launch. Moving them into the PYZ removed that per-launch cost.
 - `src/xtractor/bundle.py` (new): on first use extracts to
   `~/Library/Caches/Xtractor/<app-version>-<sha8 of the asset hashes>/` (dir mode 0700), one atomic
-  temp file + `os.replace` per file (safe under concurrent runs), `chmod 755`, hash-checked before
-  and after, ad-hoc `codesign` re-applied only if `codesign --verify` fails on the copy. Every later start
+  temp file (`O_EXCL|O_NOFOLLOW`) + `os.replace` per file (safe under concurrent runs), `chmod 755`, hash-checked before
+  and after (symlinks are never accepted), `/usr/bin/codesign` ad-hoc re-applied only if `--verify` fails on the copy.
+  The cache root and version dir are forced to 0700 and must be owned by the user and not be symlinks; stale
+  `<version>-<sha8>` siblings older than an hour are pruned after an extraction. Every later start
   re-verifies the SHA-256 of the file it uses (4 ms for both files) and re-extracts once if it is missing,
   truncated, modified or not executable. If that fails: exit 5 with a hint naming the escape hatch.
-  `XTRACTOR_CACHE_DIR` overrides the cache root (tests, sandboxes).
+  `XTRACTOR_CACHE_DIR` (cache root) and `XTRACTOR_BUNDLE_DIR` (tests) are ignored in a frozen build unless
+  `XTRACTOR_ALLOW_OVERRIDES=1` is also set (`accept_binary.sh` and `measure_startup.sh` set it).
 - Resolution order (`ffmpeg.locate_ffmpeg`, `tools.locate_js_runtime`): bundled build -> embedded copy
   first, then `$PATH`. `XTRACTOR_USE_SYSTEM_TOOLS=1` flips this ($PATH first, embedded as fallback). Non-frozen
   (dev) runs have no bundle and keep the old behaviour (PATH only). JS runtime is always passed to yt-dlp with
@@ -64,12 +67,12 @@ Network protocols stay disabled (no ffmpeg-side HLS/DASH download, so live strea
 |---|---|---|---|
 | Binary size (quickjs-ng) | **18.6 MB** (tarball 18.5 MB) | <= 70 MB | met |
 | Binary size (deno) | 56.4 MB (tarball 56.1 MB) | <= 120 MB | met |
-| `--version` warm | median **0.38 s** (0.37-0.40); was 0.86 s | <= 0.5 s | met |
-| `--version` cold (first launch of a fresh copy) | median 0.53 s; was 0.98 s | <= 1.5 s | met |
-| `-h` warm | median **0.45 s** (0.41-0.46); was 1.47 s | <= 0.5 s | met (thin margin) |
-| `-h` cold (first launch of a fresh copy) | median 0.72 s; was 1.54 s | <= 1.5 s | met |
+| `--version` warm | median **0.43 s** (0.39-0.45); was 0.86 s | <= 0.5 s | met |
+| `--version` cold (first launch of a fresh copy) | median 0.58 s; was 0.98 s | <= 1.5 s | met |
+| `-h` warm | median **0.50 s** (0.44-0.52); was 1.47 s | <= 0.5 s | **at the limit** (RUNS=10, 2026-10-23, after the --version/tool-version work) |
+| `-h` cold (first launch of a fresh copy) | median 0.78 s; was 1.54 s | <= 1.5 s | met |
 | First launch right after a build | 4.9-5.2 s, once per freshly built file | n/a | one-off macOS scan |
-| First-run tool extraction (ffmpeg + qjs) | 35 ms (write + hash), 4 ms to re-verify | n/a | negligible |
+| First-run tool extraction (ffmpeg + qjs) | 30 ms (write + hash), 4 ms to re-verify | n/a | negligible |
 | Full audio extraction, `-a` m4a stream copy, 2.3 MB | **6.1 s** warm (qjs binary, acceptance run); was 11.3 s | none in spec | see below |
 | Same, dev venv with quickjs-ng / deno on PATH | 4.85 s / 2.4 s; was 9.2 s / 4.45 s | | challenge solved once |
 
@@ -94,7 +97,8 @@ Network protocols stay disabled (no ffmpeg-side HLS/DASH download, so live strea
      `_bz2`, `_pickle`, `_statistics`, `_sha1`, `_md5`, `_sha3`, `_multiprocessing`, `_posixshmem`, `mmap`, `resource`, `grp`),
      verified against the extension modules a real `-a` run loads and by the 15-check acceptance run (15/15 pass).
      Each file the bootloader unpacks costs about 15-20 ms per launch, so `-h` warm 0.74 -> 0.45 s, `--version` 0.70 -> 0.38 s.
-  The margin on `-h` warm is thin (0.41-0.46 s vs 0.5 s) and will shrink with every new extension module. `python -X importtime`
+  The margin on `-h` warm is gone (0.44-0.52 s vs 0.5 s after the version/self-test work; `--version` now also prints the
+  bundled tool versions from the generated `xtractor_buildinfo` module, no subprocess) and will shrink with every new extension module. `python -X importtime`
   of `-h` is now about 23 ms of imports (argparse 4 ms, options/paths 14 ms): further wins can only come from fewer unpacked files.
   strip/UPX were not applied (strip invalidates the signature, UPX is not allowed). The bootloader has no option to cache the unpack.
 - If the budget is lost again (a new dependency, or slower disks), the options are, in order of effort: (a) ship the
@@ -176,9 +180,45 @@ with `pyi-archive_viewer -l -r dist/Xtractor`.
 
 ## 7. Open items
 
-1. Start-up breaches in section 3: decision needed (lazy imports in cli.py, onedir tarball, or launcher).
-2. Developer ID signing/notarization path in `sign.sh` is untested.
-3. `build_binary.sh` relies on Homebrew's Python 3.12 (its libpython and OpenSSL dylibs are bundled); a python.org build should work but was not tried.
-4. CI: `release.yml` must call `scripts/build_ffmpeg.sh` (needs `brew install pkgconf`) before `build_binary.sh`; it calls build_binary.sh
-   which builds ffmpeg itself when `build/ffmpeg` is missing, so caching `build/ffmpeg` + `build/BUILDINFO-*.json` is optional.
-5. Audio time (section 3) is dominated by two JS solves per run.
+1. Developer ID signing/notarization path in `sign.sh` is untested (no identity). Entitlements were verified with ad-hoc
+   hardened-runtime copies, see section 8.
+2. `build_binary.sh` relies on Homebrew's/setup-python's Python 3.12 (its libpython and OpenSSL dylibs are bundled); the release
+   workflow uses `actions/setup-python` and `brew install pkgconf` for `build_ffmpeg.sh`. Neither has run on a GitHub runner yet:
+   the first tag (or a `workflow_dispatch` dry run) is the test.
+3. `-h` warm start-up is at the 0.5 s budget; the next extension module or import will break it (section 3 lists the options).
+4. `ffprobe` is built but not embedded (section 1).
+
+## 8. Release process, signing and security notes
+
+**Trust root.** `--self-update` accepts a release only if `SHA256SUMS.sig` (base64 Ed25519 signature over
+`b"Xtractor-release-v1\n" + SHA256SUMS`) verifies against a public key in `TRUSTED_PUBLIC_KEYS` (`src/xtractor/selfupdate.py`).
+The signed tarball name carries the version, which must equal the release tag, so a replayed old release is refused; downloads
+are https-only, pinned to GitHub hosts, capped (200 MB, 15 min). Forks must embed their own key.
+- Generate once: `scripts/gen_signing_key.py` (private seed to `~/.config/xtractor-signing/ed25519.key`, mode 0600, never printed;
+  prints the public key hex). Back the key file up offline.
+- Store in GitHub: `gh secret set XTRACTOR_SIGNING_KEY --env release < ~/.config/xtractor-signing/ed25519.key`
+  (create the `release` environment with required reviewers first). The `publish` job runs `scripts/sign_release.py` and **fails
+  the tag release if the secret is missing**.
+- Rotation: add the new public key to `TRUSTED_PUBLIC_KEYS`, ship a release signed with the OLD key, then sign later releases with
+  the new key, and remove the old key in a still later release.
+- Rollback of a stolen key: ship a release whose binary has the key replaced; users must reinstall manually (there is no revocation
+  channel), which is why the key lives only in a protected environment.
+
+**Dependencies.** `requirements-build.txt` (hashes, `pip-compile --generate-hashes`, regenerate from `requirements-build.in` on
+macOS arm64 / Python 3.12) is installed with `--require-hashes --no-deps` by `release.yml`. `constraints-ci.txt` pins the CI matrix.
+Actions are pinned to commit SHAs (Dependabot refreshes them). Artifact attestations (`actions/attest-build-provenance`) run only
+when the repository is public (they need a public repo or GitHub Enterprise Cloud); verify with `gh attestation verify`.
+
+**Release gate.** Tag must match `vX.Y.Z[-alpha|beta|rc.N]`, be on `main`, and equal `__version__`. The build job's offline smoke test
+runs `dist/Xtractor --xtractor-selftest` (env `XTRACTOR_SELFTEST=1`): extracts the embedded tools, round-trips audio through the embedded
+ffmpeg (m4a, opus, flac, mp3, wav, mkv remux), runs the embedded JS runtime and imports `yt_dlp_ejs`. The network acceptance run
+(`scripts/accept_binary.sh`) stays a manual step (YouTube is flaky from CI IP ranges); run it before tagging.
+
+**Compliance assets.** Each release also uploads `BUILDINFO-ffmpeg.json`, `BUILDINFO-js.json`, `build_ffmpeg.sh` and `common.sh`.
+
+**Entitlements (F-15, tested 2026-10-23).** Ad-hoc signed copies of the binary with `--options runtime`: without
+`disable-library-validation` the binary does not start (different Team IDs for the extracted libpython); without
+`allow-unsigned-executable-memory` everything works (`--version`, `--list-formats`, `-a`, `-v`, self-test), so it was removed from
+`packaging/entitlements.plist`. The embedded runtimes are separate processes: hardened `ffmpeg` and `qjs` need no entitlements;
+hardened `deno` crashes without `com.apple.security.cs.allow-jit` (`packaging/entitlements-deno.plist`, sign deno with it).
+The Developer ID + notarization path itself is still untested.

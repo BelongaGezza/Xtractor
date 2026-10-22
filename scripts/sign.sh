@@ -7,9 +7,12 @@
 #       entitlements the PyInstaller bootloader needs; set NOTARY_PROFILE (a notarytool
 #       keychain profile) to also submit for notarization and wait for the verdict.
 #
-# The embedded ffmpeg/qjs are signed before they are embedded (build_ffmpeg.sh and
+# The embedded ffmpeg/qjs/deno are signed before they are embedded (build_ffmpeg.sh and
 # fetch_js_runtime.sh); the extracted cache copies keep those signatures. A Developer ID
-# build must sign them with the same identity BEFORE build_binary.sh embeds them.
+# build must sign them with the same identity BEFORE build_binary.sh embeds them:
+#   ffmpeg, qjs   codesign --timestamp --options runtime -s ID file      (no entitlements)
+#   deno          codesign --timestamp --options runtime \
+#                   --entitlements packaging/entitlements-deno.plist -s ID file   (allow-jit)
 set -euo pipefail
 # shellcheck source=scripts/common.sh
 . "$(dirname "$0")/common.sh"
