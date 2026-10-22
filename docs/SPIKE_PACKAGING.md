@@ -27,12 +27,12 @@ Library options for `yt_dlp.YoutubeDL(params)`, from `yt_dlp/YoutubeDL.py` (docs
 
 ```python
 opts = {
-  # dict: runtime name (lower-case) -> config dict. Supported names: 'deno', 'node', 'bun', 'quickjs'
-  # config keys: 'path' = path to the executable (file) OR a directory containing it
-  'js_runtimes': {'quickjs': {'path': '/abs/path/to/qjs'}},
-  # list of allowed remote component sources: 'ejs:github', 'ejs:npm'. Default: none allowed.
-  'remote_components': [],
-  'ffmpeg_location': '/abs/dir/containing/ffmpeg-and-ffprobe',   # or a path to the ffmpeg binary
+    # dict: runtime name (lower-case) -> config dict. Supported names: 'deno', 'node', 'bun', 'quickjs'
+    # config keys: 'path' = path to the executable (file) OR a directory containing it
+    "js_runtimes": {"quickjs": {"path": "/abs/path/to/qjs"}},
+    # list of allowed remote component sources: 'ejs:github', 'ejs:npm'. Default: none allowed.
+    "remote_components": [],
+    "ffmpeg_location": "/abs/dir/containing/ffmpeg-and-ffprobe",  # or a path to the ffmpeg binary
 }
 ```
 
@@ -99,9 +99,11 @@ extra pulls `brotli`, `certifi`, `mutagen`, `pycryptodomex`, `requests`, `urllib
 Resolving bundled tools at runtime:
 
 ```python
-base = getattr(sys, '_MEIPASS', dirname(abspath(__file__)))     # onefile: temp extraction dir; onedir: _internal
-qjs  = os.path.join(base, 'bin', 'qjs')
-opts = {'js_runtimes': {'quickjs': {'path': qjs}}, 'ffmpeg_location': os.path.join(base, 'bin')}
+base = getattr(
+    sys, "_MEIPASS", dirname(abspath(__file__))
+)  # onefile: temp extraction dir; onedir: _internal
+qjs = os.path.join(base, "bin", "qjs")
+opts = {"js_runtimes": {"quickjs": {"path": qjs}}, "ffmpeg_location": os.path.join(base, "bin")}
 ```
 
 PyInstaller 6 places `--add-binary` files at `<_MEIPASS>/bin/`. In onedir, `_MEIPASS` is `<dir>/_internal`.
