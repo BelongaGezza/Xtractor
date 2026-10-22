@@ -135,6 +135,7 @@ URL downloads video X; playlist and channel URLs are rejected.
 |---|---|
 | `XTRACTOR_USE_SYSTEM_TOOLS=1` | Prefer `ffmpeg` and a JavaScript runtime from `PATH` over the copies bundled in the binary (default: bundled first) |
 | `XTRACTOR_UPDATE_REPO=owner/repo` | `--self-update` from another GitHub repository |
+| `XTRACTOR_ALLOW_OVERRIDES=1` | Binary only: honour `XTRACTOR_CACHE_DIR` / `XTRACTOR_BUNDLE_DIR` (ignored otherwise; for testing) |
 | `XTRACTOR_CACHE_DIR` | Where the bundled tools are unpacked (default `~/Library/Caches/Xtractor`) |
 
 ## Not in v1
@@ -151,9 +152,10 @@ lists them as optional (F11, F12).
   `Xtractor.bak` and restored if anything fails. It contacts GitHub only when you run it.
   Exit 4 means GitHub was unreachable, 1 a checksum or archive problem (nothing was changed),
   7 that the install directory is not writable. Set `XTRACTOR_UPDATE_REPO=owner/repo` to
-  update from a different repository. `--self-update` takes no other arguments. The checksum
-  comes from the same release over HTTPS: it detects corruption and tampering in transit, but
-  it is not a signature.
+  update from a different repository (the release must still carry a valid signature).
+  `--self-update` takes no other arguments. `SHA256SUMS` is verified against a detached
+  Ed25519 signature (`SHA256SUMS.sig`) using public keys built into the binary, so a release
+  that is unsigned, badly signed or older than the installed version is refused.
 - Source installs: `pipx upgrade Xtractor` (`--self-update` prints this hint).
 
 ## Troubleshooting
