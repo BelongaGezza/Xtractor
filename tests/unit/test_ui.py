@@ -122,3 +122,40 @@ def test_unknown_total_non_tty() -> None:
     r.progress(Progress(10, None, None, None, "downloading"))
     r.progress(Progress(20, None, None, None, "downloading"))
     assert s.getvalue().count("\n") == 1
+
+
+def test_non_tty_second_larger_stream_reports_after_tiny_first() -> None:
+    """Q-12: a 712 B first stream must not silence the next, larger stream."""
+    s = io.StringIO()
+    now = [0.0]
+    r = Reporter(stream=s, clock=lambda: now[0])
+    r.progress(prog(712, total=712))
+    r.progress(prog(712, total=712, status="finished"))
+    before = s.getvalue().count("\n")
+    now[0] = 0.5  # well inside the 5 s window: only the percent step can trigger output
+    r.progress(prog(1000, total=100000))  # new stream (first event)
+    r.progress(prog(20000, total=100000))  # +20%
+    assert s.getvalue().count("\n") == before + 2
+    assert "20.0% of" in s.getvalue().splitlines()[-1]
+
+
+def test_error_after_tty_progress_starts_on_a_fresh_line() -> None:
+    s = TtyStream()
+    r = Reporter(stream=s)
+    r.progress(prog(400))
+    r.finish()
+    r.error("boom")
+    assert s.getvalue().endswith("ETA 00:07\nXtractor: error: boom\n")
+
+
+def test_terminal_output_escapes_control_and_bidi_characters() -> None:
+    from xtractor.ui import safe_text
+
+    evil = "ti\x1b[2Jtle\x07‮RTL⁦x\x9b31m\r\n"
+    out = safe_text(evil)
+    assert "\x1b" not in out and "\x07" not in out and "\x9b" not in out and "\r" not in out
+    assert "‮" not in out and "⁦" not in out
+    assert out.endswith("\n") and "\\x1b[2J" in out
+    s = io.StringIO()
+    Reporter(stream=s).notice("Title: \x1b]0;pwn\x07")
+    assert "\x1b" not in s.getvalue() and "\\x1b" in s.getvalue()

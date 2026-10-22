@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .errors import UsageError
 
-_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_VIDEO_ID_RE = re.compile(r"[A-Za-z0-9_-]{11}")
 _YOUTUBE_HOSTS = frozenset({"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"})
 _SHORT_HOST = "youtu.be"
 _ID_PATH_PREFIXES = ("shorts", "live")
@@ -28,7 +28,7 @@ def _canonical(video_id: str) -> str:
 
 
 def _check_id(candidate: str | None, original: str) -> str:
-    if not candidate or not _VIDEO_ID_RE.match(candidate):
+    if not candidate or _VIDEO_ID_RE.fullmatch(candidate) is None:
         raise UsageError(
             f"not a valid YouTube video ID: {candidate!r} in {original!r} "
             "(expected 11 characters: letters, digits, '-' or '_')"

@@ -10,14 +10,18 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from types import FrameType
+from typing import Any
 
-from .errors import UsageError
+from .errors import FileSystemError, UsageError
 
 MAX_NAME_BYTES = 200
 TEMPLATE_FIELDS = ("title", "id", "uploader", "upload_date", "resolution")
 TEMP_PREFIX = ".Xtractor-"
 
-_FORBIDDEN_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f\x7f]')
+_FORBIDDEN_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f\x7f-\x9f\u2028\u2029]')
+#: Invisible format characters (bidi overrides/isolates, zero-width space, BOM): they can make
+#: a filename or a terminal line display differently from what it contains.
+INVISIBLE_RE = re.compile("[\u061c\u200b\u200e\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]")
 _WS_RE = re.compile(r"\s+")
 _RESERVED = frozenset(
     {"CON", "PRN", "AUX", "NUL"}
@@ -42,6 +46,7 @@ def sanitise(name: str, *, ext: str = "", fallback: str = "video") -> str:
     not appended. An empty result becomes ``fallback``.
     """
     stem = unicodedata.normalize("NFC", name)
+    stem = INVISIBLE_RE.sub("", stem)
     stem = _FORBIDDEN_RE.sub(" ", stem)
     stem = _WS_RE.sub(" ", stem).strip()
     stem = stem.strip(" .")
@@ -129,8 +134,44 @@ def resolve_output(
 
 
 def should_skip(path: Path, *, overwrite: bool) -> bool:
-    """S5: an existing target is skipped unless ``--overwrite`` was given."""
-    return path.exists() and not overwrite
+    """S5: an existing *file* is skipped unless ``--overwrite`` was given.
+
+    A directory at the target path is an error (exit 7), never a "skipped" file.
+    """
+    if path.is_dir():
+        raise FileSystemError(f"cannot write {path}: a directory with that name exists")
+    return path.is_file() and not overwrite
+
+
+def check_output_target(
+    output: str | None, *, output_is_file: bool, cwd: Path | None = None
+) -> None:
+    """Validate ``-o`` before any network access (spec CLI rule 5, F5).
+
+    A path component that is a file (``-o afile`` used as a directory, ``-o /dev/null/x``)
+    is a usage error (exit 2); a directory that cannot be written is exit 7. Nothing is
+    created.
+    """
+    if output is None:
+        return
+    base = cwd if cwd is not None else Path.cwd()
+    path = Path(output).expanduser()
+    path = path if path.is_absolute() else base / path
+    if output_is_file:
+        if path.is_dir():
+            raise FileSystemError(f"cannot write {path}: a directory with that name exists")
+        directory = path.parent
+    else:
+        directory = path
+    cur = directory
+    while not cur.exists():
+        if cur == cur.parent:
+            return
+        cur = cur.parent
+    if not cur.is_dir():
+        raise UsageError(f"-o/--output {output!r}: {str(cur)!r} exists and is not a directory")
+    if not os.access(cur, os.W_OK | os.X_OK):
+        raise FileSystemError(f"cannot write to {cur}: permission denied")
 
 
 @contextmanager
@@ -154,17 +195,23 @@ def atomic_move(src: Path, dst: Path) -> None:
 
 @contextmanager
 def sigterm_as_interrupt() -> Iterator[None]:
-    """Turn SIGTERM into ``KeyboardInterrupt`` so ``finally`` cleanup runs (exit 130)."""
+    """Turn SIGTERM/SIGHUP into ``KeyboardInterrupt`` so ``finally`` cleanup runs (exit 130)."""
 
     def handler(signum: int, frame: FrameType | None) -> None:
         raise KeyboardInterrupt
 
+    signals: list[signal.Signals] = [signal.SIGTERM]
+    if hasattr(signal, "SIGHUP"):  # terminal closed
+        signals.append(signal.SIGHUP)
+    previous: dict[signal.Signals, Any] = {}
     try:
-        previous = signal.signal(signal.SIGTERM, handler)
+        for sig in signals:
+            previous[sig] = signal.signal(sig, handler)
     except ValueError:  # not in the main thread
         yield
         return
     try:
         yield
     finally:
-        signal.signal(signal.SIGTERM, previous)
+        for sig, old in previous.items():
+            signal.signal(sig, old)

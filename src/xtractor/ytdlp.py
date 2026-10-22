@@ -7,6 +7,7 @@ Every exception leaving this module has been classified by ``errors.classify_exc
 from __future__ import annotations
 
 import copy
+import glob
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -159,7 +160,7 @@ def find_downloaded(info: Mapping[str, Any], dest_dir: Path) -> Path | None:
     vid = str(info.get("id") or "")
     candidates = [
         p
-        for p in sorted(dest_dir.glob(f"{vid}.*" if vid else "*"))
+        for p in sorted(dest_dir.glob(f"{glob.escape(vid)}.*" if vid else "*"))
         if p.is_file() and p.suffix not in (".part", ".ytdl")
     ]
     return candidates[-1] if candidates else None
@@ -184,7 +185,11 @@ class YtDlpExtractor:
 
     def _youtube_dl(self, params: dict[str, Any]) -> Any:
         import yt_dlp  # lazy: keeps -h/--version fast and dependency-free
+        from yt_dlp.globals import plugin_dirs
 
+        # No third-party code: yt-dlp would otherwise import plugins from the user config
+        # dirs, the executable's directory and sys.path (F-04). An empty list disables loading.
+        plugin_dirs.value = []
         return yt_dlp.YoutubeDL(params)
 
     def probe(self, ref: VideoRef) -> MediaInfo:

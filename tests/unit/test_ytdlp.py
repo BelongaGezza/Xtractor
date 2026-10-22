@@ -365,3 +365,33 @@ def test_playlist_result_is_not_reused_for_download(tmp_path: Path) -> None:
     FakeDL.instances.clear()
     ex.download(REF, "140", tmp_path, "o", None, print)
     assert FakeDL.instances[0].calls == [(REF.canonical_url, True)]  # falls back to extract_info
+
+
+def test_find_downloaded_escapes_glob_metacharacters(tmp_path: Path) -> None:
+    (tmp_path / "abc.m4a").write_bytes(b"x")
+    (tmp_path / "a[b]c.m4a").write_bytes(b"y")
+    assert find_downloaded({"id": "a[b]c"}, tmp_path) == tmp_path / "a[b]c.m4a"
+    assert find_downloaded({"id": "*"}, tmp_path) is None
+
+
+def test_yt_dlp_plugins_are_not_loaded(tmp_path: Path) -> None:
+    """F-04: a yt_dlp_plugins package on sys.path must not be imported (code execution)."""
+    pytest.importorskip("yt_dlp")
+    import subprocess
+    import sys
+
+    pkg = tmp_path / "yt_dlp_plugins" / "extractor"
+    pkg.mkdir(parents=True)
+    marker = tmp_path / "pwned"
+    (pkg / "evil.py").write_text(f"open({str(marker)!r}, 'w').write('x')\n")
+    code = (
+        "from xtractor.ytdlp import YtDlpExtractor, base_params\n"
+        "YtDlpExtractor()._youtube_dl(base_params())\n"
+    )
+    env = {"PYTHONPATH": str(tmp_path), "PATH": "/usr/bin:/bin", "HOME": str(tmp_path)}
+    subprocess.run([sys.executable, "-c", code], env=env, check=True, capture_output=True)
+    assert not marker.exists()
+    # control: with the default plugin_dirs the same plugin IS executed (proves the test bites)
+    control = "import yt_dlp\nyt_dlp.YoutubeDL({'quiet': True})\n"
+    subprocess.run([sys.executable, "-c", control], env=env, check=True, capture_output=True)
+    assert marker.exists()

@@ -154,3 +154,79 @@ def test_sigterm_becomes_keyboard_interrupt(tmp_path: Path) -> None:
         signal.pause()
     assert signal.getsignal(signal.SIGTERM) is before
     assert list(tmp_path.iterdir()) == []
+
+
+# ---------------------------------------------------------- F-05, Q-05, Q-14
+def test_sanitise_strips_bidi_c1_and_invisible_characters() -> None:
+    from xtractor.paths import sanitise
+
+    name = "a\u202eb\u2066c\x85d\x9be\u200bf\u2028g\ufeffh"
+    out = sanitise(name)
+    assert out == "abc d ef gh"
+    for bad in "\u202e\u2066\x85\x9b\u200b\u2028\ufeff":
+        assert bad not in out
+
+
+def test_should_skip_directory_target_is_an_error(tmp_path: Path) -> None:
+    from xtractor.errors import FileSystemError
+    from xtractor.paths import should_skip
+
+    d = tmp_path / "x.m4a"
+    d.mkdir()
+    with pytest.raises(FileSystemError) as info:
+        should_skip(d, overwrite=False)
+    assert info.value.exit_code == 7
+    f = tmp_path / "y.m4a"
+    f.write_bytes(b"1")
+    assert should_skip(f, overwrite=False) and not should_skip(f, overwrite=True)
+    assert not should_skip(tmp_path / "none.m4a", overwrite=False)
+
+
+def test_check_output_target_cases(tmp_path: Path) -> None:
+    import os
+
+    from xtractor.errors import FileSystemError, UsageError
+    from xtractor.paths import check_output_target
+
+    check_output_target(None, output_is_file=False)
+    check_output_target(str(tmp_path / "new" / "deeper"), output_is_file=False)
+    check_output_target(str(tmp_path / "f.m4a"), output_is_file=True)
+
+    afile = tmp_path / "afile"
+    afile.write_text("x")
+    with pytest.raises(UsageError):
+        check_output_target(str(afile), output_is_file=False)
+    with pytest.raises(UsageError):
+        check_output_target(str(afile / "sub" / "x.m4a"), output_is_file=True)
+    with pytest.raises(UsageError):
+        check_output_target("afile/more", output_is_file=False, cwd=tmp_path)
+
+    adir = tmp_path / "t.m4a"
+    adir.mkdir()
+    with pytest.raises(FileSystemError):
+        check_output_target(str(adir), output_is_file=True)
+
+    if os.geteuid() != 0:
+        ro = tmp_path / "ro"
+        ro.mkdir()
+        ro.chmod(0o500)
+        try:
+            with pytest.raises(FileSystemError) as info:
+                check_output_target(str(ro / "sub"), output_is_file=False)
+            assert info.value.exit_code == 7
+        finally:
+            ro.chmod(0o700)
+
+
+def test_sigterm_and_sighup_become_keyboard_interrupt() -> None:
+    import os
+    import signal
+
+    from xtractor.paths import sigterm_as_interrupt
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        with pytest.raises(KeyboardInterrupt), sigterm_as_interrupt():
+            os.kill(os.getpid(), sig)
+    assert signal.getsignal(signal.SIGHUP) in (signal.SIG_DFL, signal.SIG_IGN) or callable(
+        signal.getsignal(signal.SIGHUP)
+    )

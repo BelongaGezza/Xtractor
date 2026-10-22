@@ -110,3 +110,18 @@ def test_bare_playlist(url: str) -> None:
 def test_channels(url: str) -> None:
     with pytest.raises(UsageError, match="channels are not supported"):
         parse_youtube_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ%0A",
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ%0a",
+        "https://youtu.be/dQw4w9WgXcQ%0A",
+        "https://www.youtube.com/shorts/dQw4w9WgXcQ%0A",
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ%00",
+    ],
+)
+def test_trailing_newline_in_video_id_is_rejected(url: str) -> None:
+    with pytest.raises(UsageError):
+        parse_youtube_url(url)
