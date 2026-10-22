@@ -4,8 +4,10 @@ THIRD-PARTY NOTICES for the Xtractor single-file binary
 Xtractor itself is released under the MIT License (see LICENSE).
 
 The Xtractor binary (Xtractor-<version>-macos-arm64.tar.gz) bundles the third-party
-software listed below. Versions are recorded in BUILDINFO-*.json next to the release and
-are printed by `Xtractor --version` / `Xtractor --verbose`.
+software listed below. The versions of yt-dlp, FFmpeg and the
+JavaScript runtime are printed by `Xtractor --version`; the full build records
+(BUILDINFO-ffmpeg.json with the exact configure line, BUILDINFO-js.json) are published as
+assets of every GitHub release.
 
  Component            Version (this build)   Licence
  -------------------  ---------------------  -------------------------------------------
@@ -25,8 +27,7 @@ are printed by `Xtractor --version` / `Xtractor --verbose`.
  requests / urllib3   2.34 / 2.8             Apache-2.0 / MIT
  idna, charset-normalizer, brotli             BSD-3-Clause, MIT, MIT
  certifi              2026.10                MPL-2.0 (source: https://github.com/certifi/python-certifi)
- pycryptodomex        3.24                   BSD 2-clause / public domain
- OpenSSL, libexpat, liblzma, libmpdec, zlib   (dynamic libraries of the CPython build; Apache-2.0,
+ OpenSSL, libexpat, libmpdec, zlib           (dynamic libraries of the CPython build; Apache-2.0,
                                              MIT, public domain, BSD-2-Clause, zlib licence)
 
 mutagen (GPL-2.0-or-later) is deliberately NOT bundled; yt-dlp treats it as optional.
@@ -51,12 +52,13 @@ projects and pinned (with SHA-256) in scripts/build_ffmpeg.sh of the Xtractor re
                  sha256 6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1
 
 No patches are applied. The complete build recipe, including every ./configure option, is
-scripts/build_ffmpeg.sh; the options are also stored in BUILDINFO-ffmpeg.json shipped with
-each release. Running `scripts/build_ffmpeg.sh` on an Apple Silicon Mac with the Xcode
-command line tools and pkgconf reproduces the embedded executable's code.
-If you cannot obtain any of this from the locations above, write to the maintainer
-(see the repository's README) and the sources will be provided on request for at least
-three years after the release, as LGPL section 6(c) allows.
+scripts/build_ffmpeg.sh; the options are also stored in BUILDINFO-ffmpeg.json, published with
+each release together with the exact build_ffmpeg.sh and common.sh used. Running
+`scripts/build_ffmpeg.sh` on an Apple Silicon Mac with the Xcode command line tools and
+pkgconf reproduces the embedded executable's code. If you cannot obtain any of this from
+the locations above, open an issue at https://github.com/BelongaGezza/Xtractor/issues
+asking for the sources; they will be provided on request for at least three years after
+the release, as LGPL section 6(c) allows.
 
 Replacing FFmpeg. You may use your own (LGPL-compatible or any) ffmpeg instead of the
 embedded one: put it on PATH and run Xtractor with XTRACTOR_USE_SYSTEM_TOOLS=1. The

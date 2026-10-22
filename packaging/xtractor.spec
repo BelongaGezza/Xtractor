@@ -40,6 +40,8 @@ hidden = [
 BLOB_DIR = STAGE / "blob"
 assert (BLOB_DIR / "xtractor_blob.py").is_file()
 hidden.append("xtractor_blob")
+assert (BLOB_DIR / "xtractor_buildinfo.py").is_file()  # versions shown by --version
+hidden.append("xtractor_buildinfo")
 
 # Modules the CLI never reaches. Conservative: only things verified absent from any
 # code path Xtractor uses (no GUI, no tests, no docs, no cookies/sqlite, no XML-RPC).

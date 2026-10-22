@@ -43,6 +43,9 @@ rm -rf "$STAGE"; mkdir -p "$STAGE"
 "$PYTHON" "$REPO_ROOT/scripts/release_tools.py" manifest "$STAGE" "$VERSION" \
   "$BUILD_DIR/ffmpeg" "$BUILD_DIR/js/$JS_EXE" "$JS_NAME"
 
+"$PYTHON" "$REPO_ROOT/scripts/release_tools.py" buildinfo "$STAGE" \
+  "$BUILD_DIR/BUILDINFO-ffmpeg.json" "$BUILD_DIR/BUILDINFO-js.json"
+
 log "running PyInstaller (onefile, arm64)"
 rm -rf "$DIST" "$WORKPATH"
 XTRACTOR_STAGE="$STAGE" XTRACTOR_VERSION="$VERSION" \
