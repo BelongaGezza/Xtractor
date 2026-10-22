@@ -75,6 +75,23 @@ excludes = [
     "_codecs_cn",
     "_codecs_hk",
     "_codecs_iso2022",
+    # Optional C accelerators / modules with pure-Python or guarded fallbacks, never needed by
+    # Xtractor (checked against the modules a real -a run loads). 12 fewer files to unpack.
+    "_lzma",
+    "lzma",
+    "_bz2",
+    "bz2",
+    "_pickle",
+    "_statistics",
+    "_sha1",
+    "_md5",
+    "_sha3",
+    "_multiprocessing",
+    "_posixshmem",
+    "multiprocessing",
+    "mmap",
+    "resource",
+    "grp",
     "numpy",
     "pytest",
     "yt_dlp.__pyinstaller",  # the PyInstaller hook directory, irrelevant at run time
