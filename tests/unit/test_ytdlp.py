@@ -49,6 +49,8 @@ class FakeDL:
         self.result = result
         self.exc = exc
         self.calls: list[tuple[str, bool]] = []
+        self.processed: list[tuple[Any, bool]] = []
+        self.process_flags: list[bool] = []
         FakeDL.instances.append(self)
 
     def __enter__(self) -> FakeDL:
@@ -57,8 +59,15 @@ class FakeDL:
     def __exit__(self, *a: object) -> None:
         return None
 
-    def extract_info(self, url: str, download: bool = True) -> Any:
+    def extract_info(self, url: str, download: bool = True, process: bool = True) -> Any:
         self.calls.append((url, download))
+        self.process_flags.append(process)
+        if self.exc is not None:
+            raise self.exc
+        return self.result
+
+    def process_ie_result(self, info: Any, download: bool = True) -> Any:
+        self.processed.append((info, download))
         if self.exc is not None:
             raise self.exc
         return self.result
@@ -307,3 +316,52 @@ def test_real_youtube_dl_factory_is_lazy_import() -> None:
     ydl = YtDlpExtractor()._youtube_dl(base_params())
     assert type(ydl).__name__ == "YoutubeDL"
     ydl.close()
+
+
+def test_download_reuses_probed_info_instead_of_re_extracting(tmp_path: Path) -> None:
+    """The JS challenge is solved during extraction: a second extract_info doubles the run time."""
+    f = tmp_path / "dQw4w9WgXcQ.m4a"
+    f.write_text("x")
+    ex = Extractor()
+    ex.result = {
+        "id": "dQw4w9WgXcQ",
+        "title": "T",
+        "formats": [{"format_id": "140"}],
+        "requested_downloads": [{"filepath": str(f)}],
+    }
+    FakeDL.instances.clear()
+    ex.probe(REF)
+    ex.download(REF, "140", tmp_path, "%(id)s.%(ext)s", None, print)
+    probe_dl, dl = FakeDL.instances
+    assert probe_dl.calls == [(REF.canonical_url, False)]
+    assert probe_dl.process_flags == [False]  # raw result kept for the download
+    assert probe_dl.processed[0][1] is False  # a copy is format-processed for MediaInfo
+    assert probe_dl.processed[0][0] is not ex._probed["dQw4w9WgXcQ"]
+    assert dl.calls == []  # no extract_info in the download instance
+    (info, download) = dl.processed[0]
+    assert download is True and info["id"] == "dQw4w9WgXcQ"
+    assert info is not ex._probed["dQw4w9WgXcQ"]  # yt-dlp mutates what it is given
+    assert dl.process_flags == []
+    assert dl.params["format"] == "140"
+
+
+def test_download_process_error_is_classified(tmp_path: Path) -> None:
+    ex = Extractor()
+    ex.result = {"id": "dQw4w9WgXcQ", "formats": []}
+    ex.probe(REF)
+    ex.exc = dl_error("ERROR: unable to download video data: HTTP Error 503")
+    with pytest.raises(NetworkError):
+        ex.download(REF, "140", tmp_path, "o", None, print)
+
+
+def test_playlist_result_is_not_reused_for_download(tmp_path: Path) -> None:
+    f = tmp_path / "dQw4w9WgXcQ.m4a"
+    f.write_text("x")
+    ex = Extractor()
+    ex.result = {"_type": "playlist", "entries": [INFO]}
+    ex.probe(REF)
+    assert ex._probed == {}
+    ex.result = {"id": "dQw4w9WgXcQ", "requested_downloads": [{"filepath": str(f)}]}
+    FakeDL.instances.clear()
+    ex.download(REF, "140", tmp_path, "o", None, print)
+    assert FakeDL.instances[0].calls == [(REF.canonical_url, True)]  # falls back to extract_info

@@ -6,6 +6,7 @@ Every exception leaving this module has been classified by ``errors.classify_exc
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -177,6 +178,9 @@ class YtDlpExtractor:
         self._ffmpeg = ffmpeg_location
         self._js = js_runtime
         self._logger = StderrLogger(logger) if logger is not None else None
+        # Raw info dicts from probe(), by video id. download() feeds them to
+        # YoutubeDL.process_ie_result so the (expensive) JS challenge is solved once per run.
+        self._probed: dict[str, dict[str, Any]] = {}
 
     def _youtube_dl(self, params: dict[str, Any]) -> Any:
         import yt_dlp  # lazy: keeps -h/--version fast and dependency-free
@@ -187,18 +191,26 @@ class YtDlpExtractor:
         params = base_params(ffmpeg_location=self._ffmpeg, js_runtime=self._js, logger=self._logger)
         try:
             with self._youtube_dl(params) as ydl:
-                info = ydl.extract_info(ref.canonical_url, download=False)
+                # process=False returns the extractor's raw result (the JS challenge is solved
+                # in here). Format selection runs afterwards on a copy, so the raw dict stays
+                # free of the selected format's fields and can be re-used for the download
+                # (re-processing an already-processed dict leaks the previously selected
+                # format's fields into the next one and YouTube answers 403).
+                raw = ydl.extract_info(ref.canonical_url, download=False, process=False)
+                info = ydl.process_ie_result(copy.deepcopy(raw), download=False)
         except XtractorError:
             raise
         except Exception as exc:
             raise classify_exception(exc, video_id=ref.video_id) from exc
-        if not isinstance(info, dict):
+        if not isinstance(info, dict) or not isinstance(raw, dict):
             raise InternalError(f"no metadata returned for {ref.video_id}")
         if info.get("_type") == "playlist":  # defensive: noplaylist should prevent this
             entries = [e for e in info.get("entries") or [] if e]
             if not entries:
                 raise InternalError(f"no metadata returned for {ref.video_id}")
             info = entries[0]
+        elif raw.get("_type", "video") == "video":
+            self._probed[ref.video_id] = raw
         return MediaInfo.from_dict(info)
 
     def download(
@@ -226,8 +238,14 @@ class YtDlpExtractor:
             params["merge_output_format"] = merge_to
             params["postprocessors"] = [{"key": "FFmpegMetadata", "add_metadata": True}]
         try:
+            probed = self._probed.get(ref.video_id)
             with self._youtube_dl(params) as ydl:
-                info = ydl.extract_info(ref.canonical_url, download=True)
+                if probed is not None:
+                    # Reuse the probe's result: formats already carry solved, signed URLs,
+                    # so only format selection and the download happen here (no re-extract).
+                    info = ydl.process_ie_result(copy.deepcopy(probed), download=True)
+                else:
+                    info = ydl.extract_info(ref.canonical_url, download=True)
         except XtractorError:
             raise
         except Exception as exc:
