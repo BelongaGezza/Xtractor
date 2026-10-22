@@ -287,3 +287,30 @@ def test_build_deps_wires_tools(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     fl = cli.parse_args(["--list-formats", URL])
     monkeypatch.setattr(cli, "ensure_dependencies", lambda **kw: ToolPaths(None, js))
     assert cli._build_deps(fl, Reporter(stream=io.StringIO())).ffmpeg_bin == "ffmpeg"
+
+
+README = Path(__file__).resolve().parents[2] / "README.md"
+
+
+def test_readme_documents_every_option_in_help(capsys: pytest.CaptureFixture[str]) -> None:
+    readme = README.read_text()
+    flags = {s for a in build_parser()._actions for s in a.option_strings if s.startswith("-")}
+    assert "--self-update" in flags
+    missing = [f for f in sorted(flags) if f"`{f}`" not in readme and f"`{f} " not in readme]
+    assert missing == []
+
+
+def test_readme_legal_notice_identical_to_help() -> None:
+    text = " ".join(line.removeprefix("> ") for line in README.read_text().splitlines())
+    assert " ".join(LEGAL_NOTICE.split()) in " ".join(text.split())
+
+
+def test_readme_documents_defaults_and_exit_codes() -> None:
+    readme = README.read_text()
+    for code, _ in EXIT_CODE_TABLE:
+        assert f"| {code} |" in readme
+    for rate in SAMPLE_RATES:
+        assert str(rate) in readme
+    for fmt in (*AUDIO_FORMATS, *VIDEO_FORMATS, *RESOLUTIONS):
+        assert fmt in readme
+    assert "xattr -d com.apple.quarantine" in readme
