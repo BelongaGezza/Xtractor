@@ -202,7 +202,7 @@ Resolved:
 - OQ4 Windows/Linux: out of scope for the binary; source remains portable, not CI-gated.
 
 Pending:
-- **P1 (user decision):** Apple Developer ID (US$99/yr) for notarization. Without it, ad-hoc signing only (see 9).
+- **P1 (decided 2026-10-22):** ad-hoc signing for v1; no Apple Developer ID. Notarization is deferred and can be added later without design changes (see 9).
 - **P2 (spike):** JS runtime = deno vs quickjs-ng; `--onefile` vs Nuitka vs `--onedir` based on measured startup/size (docs/SPIKE_PACKAGING.md).
 
 ## 9. Distribution
