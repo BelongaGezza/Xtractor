@@ -2,7 +2,8 @@
 
 ffmpeg lookup itself lives in :mod:`xtractor.ffmpeg`; the JavaScript runtime that
 yt-dlp needs for YouTube (deno, node, quickjs or bun) is located here. Both prefer
-``$PATH`` and keep a ``_bundled_*`` seam for the single-binary build (milestone M10).
+``$PATH`` outside a bundled build; a bundled build uses its embedded copies first
+(``XTRACTOR_USE_SYSTEM_TOOLS=1`` flips the order), see :mod:`xtractor.bundle`.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import bundle
 from .errors import MissingDependency
 from .ffmpeg import locate_ffmpeg
 
@@ -38,8 +40,9 @@ class ToolPaths:
 
 
 def _bundled_js_runtime() -> JsRuntime | None:
-    """Seam for the single-binary build: return a bundled/cached runtime, else ``None``."""
-    return None
+    """The embedded JS runtime extracted to the cache, or ``None`` outside a bundled build."""
+    found = bundle.bundled_js()
+    return JsRuntime(found[0], found[1]) if found else None
 
 
 def js_runtime_install_hint(platform: str | None = None) -> str:
@@ -49,15 +52,28 @@ def js_runtime_install_hint(platform: str | None = None) -> str:
     return "install deno (https://deno.com) or Node.js 22+ and make sure it is on your PATH"
 
 
-def locate_js_runtime() -> JsRuntime:
-    """Return a usable JavaScript runtime (``$PATH`` first), or raise exit-5 error."""
+def _system_js_runtime() -> JsRuntime | None:
     for name, exe in JS_RUNTIME_CANDIDATES:
         found = shutil.which(exe)
         if found:
             return JsRuntime(name, Path(found))
+    return None
+
+
+def locate_js_runtime() -> JsRuntime:
+    """Return a usable JavaScript runtime, or raise an exit-5 error.
+
+    Embedded runtime first in a bundled build (else ``$PATH``); with
+    ``XTRACTOR_USE_SYSTEM_TOOLS=1`` the ``$PATH`` runtimes come first.
+    """
+    system = _system_js_runtime()
+    if bundle.use_system_tools() and system is not None:
+        return system
     bundled = _bundled_js_runtime()
     if bundled is not None and bundled.path.exists():
         return bundled
+    if system is not None:
+        return system
     raise MissingDependency(
         "no JavaScript runtime was found (YouTube extraction needs deno, node, quickjs or bun)",
         hint=js_runtime_install_hint(),

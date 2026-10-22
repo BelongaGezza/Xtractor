@@ -1,8 +1,9 @@
 """ffmpeg location, argv construction and execution.
 
-All knowledge of *where* ffmpeg lives is isolated in :func:`locate_ffmpeg`. Today it
-prefers ``$PATH``; a later packaging step adds a bundled/cached copy as the fallback
-(see ``_bundled_ffmpeg``) without touching any caller.
+All knowledge of *where* ffmpeg lives is isolated in :func:`locate_ffmpeg`. In a
+bundled (single-binary) build the embedded copy, extracted once to the cache, is used
+first so behaviour is reproducible; ``XTRACTOR_USE_SYSTEM_TOOLS=1`` prefers ``$PATH``.
+Outside a bundled build only ``$PATH`` is used.
 """
 
 from __future__ import annotations
@@ -14,24 +15,34 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from . import bundle
 from .errors import FileSystemError, InternalError, MissingDependency, ffmpeg_install_hint
 from .formats import AudioPlan, Tags
 from .options import AudioOptions
 
 
 def _bundled_ffmpeg() -> Path | None:
-    """Seam for the single-binary build: return a bundled/cached ffmpeg, else ``None``."""
-    return None
+    """The embedded ffmpeg extracted to the cache, or ``None`` outside a bundled build.
+
+    Raises :class:`MissingDependency` if a bundle exists but cannot be extracted.
+    """
+    return bundle.bundled_asset_path("ffmpeg")
 
 
 def locate_ffmpeg() -> Path:
-    """Return the ffmpeg executable, preferring ``$PATH``; raise exit-5 error if absent."""
-    found = shutil.which("ffmpeg")
-    if found:
-        return Path(found)
+    """Return the ffmpeg executable; raise an exit-5 error if there is none.
+
+    Order: embedded copy first (bundled builds), else ``$PATH``; with
+    ``XTRACTOR_USE_SYSTEM_TOOLS=1`` ``$PATH`` comes first and the embedded copy is the fallback.
+    """
+    system = shutil.which("ffmpeg")
+    if bundle.use_system_tools() and system:
+        return Path(system)
     bundled = _bundled_ffmpeg()
     if bundled is not None and bundled.exists():
         return bundled
+    if system:
+        return Path(system)
     raise MissingDependency("ffmpeg was not found", hint=ffmpeg_install_hint(sys.platform))
 
 
