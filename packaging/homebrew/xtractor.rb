@@ -2,9 +2,9 @@
 # Fill in version, sha256 and the repository with packaging/homebrew/update_formula.sh.
 class Xtractor < Formula
   desc "Extract the audio or video track from a YouTube video"
-  homepage "https://github.com/OWNER/Xtractor"
+  homepage "https://github.com/BelongaGezza/Xtractor"
   version "0.0.0"
-  url "https://github.com/OWNER/Xtractor/releases/download/v#{version}/Xtractor-#{version}-macos-arm64.tar.gz"
+  url "https://github.com/BelongaGezza/Xtractor/releases/download/v#{version}/Xtractor-#{version}-macos-arm64.tar.gz"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "MIT"
 

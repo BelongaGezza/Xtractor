@@ -268,10 +268,14 @@ def test_garbage_api_response(exe: Path) -> None:
         updater(f, exe).run()
 
 
-def test_repo_placeholder_fails_clearly(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_repo_default_is_the_real_repo(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(selfupdate.REPO_ENV, raising=False)
+    assert resolve_repo() == "BelongaGezza/Xtractor"
+
+
+def test_repo_placeholder_fails_clearly() -> None:
     with pytest.raises(UsageError, match="not configured"):
-        resolve_repo()
+        resolve_repo({selfupdate.REPO_ENV: "OWNER/Xtractor"})
 
 
 def test_repo_env_override_and_validation() -> None:

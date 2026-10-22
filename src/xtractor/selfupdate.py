@@ -38,8 +38,8 @@ from .errors import (
     UsageError,
 )
 
-#: Placeholder until the GitHub owner is known; override with XTRACTOR_UPDATE_REPO=owner/repo.
-DEFAULT_REPO = "OWNER/Xtractor"  # PLACEHOLDER: replace with the real "owner/repo" before release
+#: Where releases are fetched from; override with XTRACTOR_UPDATE_REPO=owner/repo.
+DEFAULT_REPO = "BelongaGezza/Xtractor"
 REPO_ENV = "XTRACTOR_UPDATE_REPO"
 BINARY_NAME = "Xtractor"
 SUMS_NAME = "SHA256SUMS"
@@ -126,7 +126,7 @@ def _net(action: str, fn: Callable[[], Any]) -> Any:
 
 def resolve_repo(env: dict[str, str] | None = None) -> str:
     repo = (os.environ if env is None else env).get(REPO_ENV) or DEFAULT_REPO
-    if repo == DEFAULT_REPO or repo.startswith("OWNER/"):
+    if repo.startswith("OWNER/"):
         raise UsageError(
             "the update repository is not configured in this build",
             hint=f"set {REPO_ENV}=owner/repo to choose where releases are fetched from",

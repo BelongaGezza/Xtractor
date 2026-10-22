@@ -15,7 +15,7 @@ Xtractor v1 is built for **macOS on Apple Silicon (arm64)** only.
 ### Homebrew (recommended)
 
 ```sh
-brew install OWNER/xtractor/xtractor
+brew install BelongaGezza/xtractor/xtractor
 brew upgrade xtractor        # later, to update
 ```
 
@@ -24,11 +24,11 @@ Homebrew downloads are not quarantined, so the binary runs immediately.
 ### Direct download
 
 Download `Xtractor-<version>-macos-arm64.tar.gz` and `SHA256SUMS` from the
-[releases page](https://github.com/OWNER/Xtractor/releases), then verify and install:
+[releases page](https://github.com/BelongaGezza/Xtractor/releases), then verify and install:
 
 ```sh
-curl -LO https://github.com/OWNER/Xtractor/releases/download/vX.Y.Z/Xtractor-X.Y.Z-macos-arm64.tar.gz
-curl -LO https://github.com/OWNER/Xtractor/releases/download/vX.Y.Z/SHA256SUMS
+curl -LO https://github.com/BelongaGezza/Xtractor/releases/download/vX.Y.Z/Xtractor-X.Y.Z-macos-arm64.tar.gz
+curl -LO https://github.com/BelongaGezza/Xtractor/releases/download/vX.Y.Z/SHA256SUMS
 shasum -a 256 -c SHA256SUMS --ignore-missing
 tar -xzf Xtractor-X.Y.Z-macos-arm64.tar.gz
 install -m 755 Xtractor /usr/local/bin/Xtractor
