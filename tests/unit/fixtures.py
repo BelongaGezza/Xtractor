@@ -44,3 +44,16 @@ def standard_formats() -> list[FormatInfo]:
 
 def media(formats: list[FormatInfo], **kw: object) -> MediaInfo:
     return MediaInfo(id="dQw4w9WgXcQ", title="T", formats=tuple(formats), **kw)  # type: ignore[arg-type]
+
+
+# YouTube's dynamic-range-compressed twin of 140: slightly higher bitrate, same codec/rate.
+AAC_441_DRC = FormatInfo(
+    format_id="140-drc",
+    ext="m4a",
+    vcodec="none",
+    acodec="mp4a.40.2",
+    asr=44100,
+    abr=130.0,
+    note="medium, DRC",
+    label="140-drc - audio only (medium, DRC)",
+)

@@ -33,6 +33,7 @@ class FormatInfo:
     has_drm: bool = False
     filesize: int | None = None
     note: str = ""
+    label: str = ""  # yt-dlp's descriptive ``format`` string
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> FormatInfo:
@@ -64,9 +65,19 @@ class FormatInfo:
             has_drm=bool(d.get("has_drm")),
             filesize=size,
             note=note,
+            label=str(d.get("format") or ""),
         )
 
     # -- classification ---------------------------------------------------
+    @property
+    def is_drc(self) -> bool:
+        """Dynamic-range-compressed variant (YouTube ``140-drc``): never preferred."""
+        return (
+            self.format_id.lower().endswith("-drc")
+            or "drc" in self.note.lower()
+            or "drc" in self.label.lower()
+        )
+
     @property
     def has_video(self) -> bool:
         return self.vcodec not in ("none", "")
@@ -175,7 +186,8 @@ def _audio_candidates(formats: Sequence[FormatInfo]) -> list[FormatInfo]:
     cands = [f for f in formats if f.audio_only and not f.has_drm]
     if not cands:
         raise VideoUnavailable("no downloadable audio streams found")
-    return cands
+    # DRC variants are louder/compressed re-encodes: only a last resort.
+    return [f for f in cands if not f.is_drc] or cands
 
 
 def _best(cands: Sequence[FormatInfo]) -> FormatInfo:

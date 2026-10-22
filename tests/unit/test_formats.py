@@ -326,3 +326,33 @@ def test_from_dict_uses_nominal_rung_for_letterboxed_video() -> None:
     assert (
         FormatInfo.from_dict({"format_id": "x", "height": 546, "format_note": "low"}).height == 546
     )
+
+
+# ------------------------------------------------------------ DRC variants
+def test_is_drc_detection() -> None:
+    from tests.unit.fixtures import AAC_441_DRC
+
+    assert AAC_441_DRC.is_drc
+    assert FormatInfo(format_id="251-DRC").is_drc
+    assert FormatInfo(format_id="x", note="medium, drc").is_drc
+    assert FormatInfo(format_id="x", label="x - audio only (low, DRC)").is_drc
+    assert not AAC_441.is_drc
+    d = {"format_id": "140-drc", "format": "140-drc - audio only (medium, DRC)", "acodec": "x"}
+    assert FormatInfo.from_dict(d).is_drc
+
+
+def test_drc_never_preferred_even_with_higher_bitrate() -> None:
+    from tests.unit.fixtures import AAC_441_DRC
+
+    fmts = [AAC_441_DRC, *standard_formats()]
+    assert select_audio(fmts, A()).format_id == "140"
+    assert select_audio(fmts[::-1], A()).format_id == "140"
+    assert select_audio(fmts, A(br="192k")).format_id == "140"
+    assert select_audio(fmts, A("wav")).format_id == "251"
+
+
+def test_drc_used_only_as_last_resort() -> None:
+    from tests.unit.fixtures import AAC_441_DRC
+
+    plan = select_audio([AAC_441_DRC], A())
+    assert plan.format_id == "140-drc" and plan.copy
