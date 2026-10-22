@@ -10,6 +10,10 @@ JavaScript runtime bundled, so nothing else needs to be installed.
 
 ## Install
 
+> **No release has been published yet.** The Homebrew tap and the releases page below
+> do not exist until the first `vX.Y.Z` tag is released; until then, build from source (see
+> [Build from source](#build-from-source)) or run `pipx install .` from a checkout.
+
 Xtractor v1 is built for **macOS on Apple Silicon (arm64)** only.
 
 ### Homebrew (recommended)
@@ -77,7 +81,10 @@ URL downloads video X; playlist and channel URLs are rejected.
   everywhere. If only a 48 kHz stream exists, Xtractor transcodes and says so.
 - **48 kHz** is the alternative for video and DAW work (`--sample-rate 48000`). Opus always
   runs at 48 kHz. Rates above 48 kHz are accepted but only upsample the (at most 48 kHz)
-  source, and a warning says so.
+  source, and a warning says so; `mp3` is limited to 48 kHz (88200 and 96000 are rejected
+  with exit 2 because MP3 has no such rates).
+- **Languages:** on videos with several audio tracks (auto-dubbing) Xtractor always takes the
+  original-language track, for audio and video output alike. There is no option to pick a dub.
 - **Formats:** `m4a` (default), `mp3` (most compatible, always a transcode), `opus` (best
   quality per bit), `flac` and `wav` (lossless containers; the source is still lossy).
   Lossy transcodes use 128k unless you pass `--audio-quality`.
@@ -91,7 +98,7 @@ URL downloads video X; playlist and channel URLs are rejected.
 |---|---|---|
 | `-a`, `--audio` | Extract audio only | |
 | `-v`, `--video` | Download video (with audio) | |
-| `--sample-rate HZ` | 22050, 32000, 44100, 48000, 88200 or 96000 (audio only) | 44100; 48000 for opus |
+| `--sample-rate HZ` | 22050, 32000, 44100, 48000, 88200 or 96000 (audio only; opus 48000 only, mp3 up to 48000) | 44100; 48000 for opus |
 | `--audio-format FMT` | `m4a`, `mp3`, `opus`, `flac`, `wav` | `m4a` |
 | `--audio-quality BR` | Bitrate for lossy formats, e.g. `192k` | 128k when transcoding; m4a is copied if untouched |
 | `--resolution RES` | `360`, `480`, `720`, `1080`, `1440`, `2160`, `best` | `1080` |
@@ -105,7 +112,7 @@ URL downloads video X; playlist and channel URLs are rejected.
 | `--list-formats` | Show available streams for the URL and exit | |
 | `--no-playlist` | Accepted no-op: single-video handling is already the default | |
 | `--self-update` | Update the Xtractor binary from the latest GitHub release and exit | |
-| `--version` | Print version and exit | |
+| `--version` | Print the Xtractor version and the bundled yt-dlp / ffmpeg / JavaScript runtime versions, then exit | |
 | `-h`, `--help` | Show help and exit | |
 
 ### Exit codes
@@ -122,6 +129,19 @@ URL downloads video X; playlist and channel URLs are rejected.
 | 7 | File system error (permissions, disk full) |
 | 130 | Interrupted (Ctrl-C / SIGTERM) |
 
+## Environment
+
+| Variable | Effect |
+|---|---|
+| `XTRACTOR_USE_SYSTEM_TOOLS=1` | Prefer `ffmpeg` and a JavaScript runtime from `PATH` over the copies bundled in the binary (default: bundled first) |
+| `XTRACTOR_UPDATE_REPO=owner/repo` | `--self-update` from another GitHub repository |
+| `XTRACTOR_CACHE_DIR` | Where the bundled tools are unpacked (default `~/Library/Caches/Xtractor`) |
+
+## Not in v1
+
+A config file for default overrides and shell completions are deferred; the specification
+lists them as optional (F11, F12).
+
 ## Updating
 
 - Homebrew: `brew upgrade xtractor`.
@@ -131,24 +151,41 @@ URL downloads video X; playlist and channel URLs are rejected.
   `Xtractor.bak` and restored if anything fails. It contacts GitHub only when you run it.
   Exit 4 means GitHub was unreachable, 1 a checksum or archive problem (nothing was changed),
   7 that the install directory is not writable. Set `XTRACTOR_UPDATE_REPO=owner/repo` to
-  update from a different repository.
+  update from a different repository. `--self-update` takes no other arguments. The checksum
+  comes from the same release over HTTPS: it detects corruption and tampering in transit, but
+  it is not a signature.
 - Source installs: `pipx upgrade Xtractor` (`--self-update` prints this hint).
 
 ## Troubleshooting
 
-- **"Sign in to confirm you're not a bot", "Unable to extract", or other extraction errors**:
+- **"YouTube is asking to confirm you are not a bot" (exit 3)**: YouTube is challenging this
+  network or client. Wait and retry, try another network, and update (below); Xtractor does not
+  use cookies or logins.
+- **"Unable to extract", HTTP 403 or other extraction errors**:
   YouTube changes often. Run `Xtractor --self-update` (or `brew upgrade xtractor` /
   `pipx upgrade Xtractor`) to get the newest yt-dlp.
 - **JavaScript runtime errors (exit 5)**: the binary bundles one. In a source install, install
-  `deno` (or `node`) and make sure it is on your `PATH`.
+  `deno` (>= 2.3) or `node` (>= 22) and make sure it is on your `PATH`; older versions are
+  refused with exit 5.
 - **Missing or corrupt bundled tools (exit 5)**: the bundled ffmpeg and runtime are unpacked on
-  first run into `~/Library/Caches/Xtractor/`. Delete that directory and run again. A `ffmpeg`
-  on your `PATH` is preferred over the bundled one, and may be swapped for your own build.
+  first run into `~/Library/Caches/Xtractor/`. Delete that directory and run again. The bundled
+  tools are used first so results are reproducible; set `XTRACTOR_USE_SYSTEM_TOOLS=1` to prefer
+  an `ffmpeg` and JavaScript runtime from your `PATH` instead (this is also how you swap in your
+  own ffmpeg build).
 - **Blocked by Gatekeeper after a browser download**: see [Direct download](#direct-download).
 - **Format fallbacks**: if the requested resolution does not exist, the next lower one is used;
   above 1080p with `mp4` the container becomes `mkv`; a missing 44.1 kHz AAC stream triggers a
   transcode. Each is announced on stderr. Use `--list-formats` to see what is available and
   `--strict-format` to turn container/codec switches into an error.
+- **Interrupted or failed downloads start over.** Retries (3, with backoff) resume a dropped
+  connection within one run, but nothing partial is kept between runs: Ctrl-C or an error
+  removes the temporary files.
+- **`-o` problems** are reported before anything is downloaded: a path that is (or sits under) a
+  file is exit 2; an unwritable directory, or a directory at the target file name, is exit 7.
+- **Sharing `--verbose` logs**: they contain local paths, the video title and signed stream
+  URLs. Review them before pasting them into a public issue.
+- **Unsupported URL forms**: only `watch?v=`, `youtu.be/`, `/shorts/` and `/live/` links are
+  accepted (`/embed/ID` and `/v/ID` are not).
 - **File exists**: the existing path is printed and the run exits 0; use `--overwrite` to
   replace it.
 

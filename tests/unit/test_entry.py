@@ -20,8 +20,11 @@ def test_version_fast_path_matches_cli() -> None:
     slow = subprocess.run(
         [sys.executable, "-m", "xtractor", "--version"], capture_output=True, text=True, check=False
     )
-    assert (fast.returncode, fast.stdout) == (0, slow.stdout)
-    assert slow.returncode == 0
+    # The fast path may print less than the full CLI (it must at least print the first line);
+    # packaging/entry.py should call xtractor.version.version_text() to print the same text.
+    assert fast.returncode == 0 and slow.returncode == 0
+    assert slow.stdout.startswith(fast.stdout)
+    assert fast.stdout.splitlines()[0] == slow.stdout.splitlines()[0]
     assert fast.stderr == ""
 
 

@@ -4,6 +4,7 @@ import errno
 import io
 import os
 import signal
+import sys
 from pathlib import Path
 
 import pytest
@@ -101,7 +102,9 @@ def test_no_drm_or_auth_options_exist() -> None:
 
 def test_version_without_ffmpeg(no_path: None, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--version"]) == 0
-    assert capsys.readouterr().out.strip() == f"Xtractor {__version__}"
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == f"Xtractor {__version__}"
+    assert all(len(line.split()) == 2 for line in lines[1:])  # "tool version"
 
 
 def test_usage_errors_exit_2(capsys: pytest.CaptureFixture[str]) -> None:
@@ -129,7 +132,7 @@ def test_list_formats_needs_js_runtime_but_not_ffmpeg(
     err = capsys.readouterr().err
     assert "JavaScript runtime" in err and "ffmpeg" not in err and "deno" in err
     fake_js = tmp_path / "deno"
-    fake_js.write_text("#!/bin/sh\n")
+    fake_js.write_text("#!/bin/sh\necho 'deno 2.5.0'\n")
     fake_js.chmod(0o755)
     monkeypatch.setattr("xtractor.ytdlp.YtDlpExtractor", lambda **kw: FakeExtractor())
     assert main(["--list-formats", URL]) == 0
@@ -332,3 +335,159 @@ def test_help_and_version_do_not_import_heavy_modules() -> None:
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
     assert r.stderr.strip().endswith("[]"), r.stderr
+
+
+# ----------------------------------------------------------------- Q-02: --version text
+def test_version_lists_bundled_tools_from_buildinfo(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import types
+
+    fake = types.ModuleType("xtractor_buildinfo")
+    fake.VERSIONS = {"quickjs": "2025-09-13", "ffmpeg": "7.1.1", "yt-dlp": "2026.10.21"}  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "xtractor_buildinfo", fake)
+    assert main(["--version"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        f"Xtractor {__version__}",
+        "yt-dlp 2026.10.21",
+        "ffmpeg 7.1.1",
+        "quickjs 2025-09-13",
+    ]
+
+
+def test_version_without_buildinfo_reports_installed_ytdlp(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(sys.modules, "xtractor_buildinfo", None)  # import fails
+    assert main(["--version"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == f"Xtractor {__version__}"
+    assert out[1].startswith("yt-dlp ")
+
+
+def test_version_text_survives_garbage_buildinfo(monkeypatch: pytest.MonkeyPatch) -> None:
+    import types
+
+    from xtractor.version import tool_versions
+
+    bad = types.ModuleType("xtractor_buildinfo")
+    bad.VERSIONS = 5  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "xtractor_buildinfo", bad)
+    assert "ffmpeg" not in tool_versions()
+
+
+# ------------------------------------------------- Q-05: -o validated before any network
+def test_output_that_is_a_file_fails_before_probe(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ex = FakeExtractor()
+    patch_deps(monkeypatch, ex)
+    afile = tmp_path / "afile"
+    afile.write_text("x")
+    assert main(["-a", "-o", str(afile), URL]) == 2
+    assert main(["-a", "-o", str(afile / "x.m4a"), URL]) == 2
+    err = capsys.readouterr().err
+    assert "not a directory" in err
+    assert ex.probes == []
+
+
+def test_directory_at_target_path_is_exit_7_not_a_skip(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ex = FakeExtractor()
+    patch_deps(monkeypatch, ex)
+    (tmp_path / "My Title.m4a").mkdir()  # same name the template would produce
+    assert main(["-a", "-n", "My Title", "-o", str(tmp_path), URL]) == 7
+    cap = capsys.readouterr()
+    assert "directory" in cap.err and cap.out == ""
+    assert ex.downloads == []
+
+
+# ------------------------------------------------------------ Q-11: --self-update alone
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["-o", "x"],
+        ["--sample-rate", "48000"],
+        ["--strict-format"],
+        ["-q"],
+        ["--overwrite"],
+        ["--resolution", "720"],
+        ["-n", "t"],
+        [URL],
+        ["-a"],
+    ],
+)
+def test_self_update_rejects_any_other_argument(
+    extra: list[str], capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom() -> int:
+        raise AssertionError("must not run")
+
+    monkeypatch.setattr("xtractor.selfupdate.run_self_update", boom)
+    assert main(["--self-update", *extra]) == 2
+    assert "cannot be combined" in capsys.readouterr().err
+
+
+def test_help_documents_env_var_and_mp3_limit(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["-h"])
+    out = capsys.readouterr().out
+    assert "XTRACTOR_USE_SYSTEM_TOOLS" in out
+    assert "mp3" in out and "rejected" in out
+
+
+def test_error_mid_progress_starts_on_its_own_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from xtractor import cli
+
+    class Tty(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    stream = Tty()
+    real = cli.Reporter
+    monkeypatch.setattr(cli, "Reporter", lambda **kw: real(stream=stream, **kw))
+
+    def fail(_: Path) -> None:
+        raise RuntimeError("boom")
+
+    ex = FakeExtractor(on_download=fail)
+    patch_deps(monkeypatch, ex)
+    assert main(["-a", "-o", str(tmp_path), URL]) == 1
+    assert "boom" in capsys.readouterr().err
+
+
+def test_installed_ytdlp_version_lookup_edge_cases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib.util
+    import types
+
+    from xtractor import version
+
+    pkg = tmp_path / "yt_dlp"
+    pkg.mkdir()
+    spec = types.SimpleNamespace(submodule_search_locations=[str(pkg)])
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: spec)
+    assert version._installed_ytdlp_version() is None  # no version.py
+    (pkg / "version.py").write_text("garbage\n")
+    assert version._installed_ytdlp_version() is None
+    (pkg / "version.py").write_text("__version__ = '2030.01.02'\n")
+    assert version._installed_ytdlp_version() == "2030.01.02"
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+    assert version._installed_ytdlp_version() is None
+
+    def raising(name: str) -> None:
+        raise ValueError(name)
+
+    monkeypatch.setattr(importlib.util, "find_spec", raising)
+    assert version._installed_ytdlp_version() is None
+
+
+def test_version_text_orders_known_then_unknown_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    from xtractor import version
+
+    monkeypatch.setattr(version, "_buildinfo", lambda: {"zzz": "1", "ffmpeg": "7", "yt-dlp": "9"})
+    assert version.version_text().splitlines()[1:] == ["yt-dlp 9", "ffmpeg 7", "zzz 1"]

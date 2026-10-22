@@ -1,8 +1,9 @@
 # Xtractor — Product Specification
 
-Version: 0.2 · Date: 2026-10-22 · Status: Ready for development (packaging spike pending)
+Version: 0.3 · Date: 2026-10-23 · Status: Ready for development (packaging spike pending)
 
 **Changelog**
+- v0.3 (2026-10-23): review follow-up. Tool precedence is now bundled first with `XTRACTOR_USE_SYSTEM_TOOLS=1` to prefer `$PATH` (replaces "PATH ffmpeg preferred"); original-language audio track rule for dubbed videos (3.4); F8 resume is within a run only; F11 (config file) and F12 (completions) are deferred beyond v1; `-o` is validated before any network call; `--version` prints bundled tool versions from build metadata; `--self-update` accepts no other arguments; mp3 is limited to 48 kHz; the packaged ffmpeg is ffmpeg only (no ffprobe) with a few extra decoders/filters (BUILD_NOTES).
 - v0.2 (2026-10-22): folded in plan resolutions S1–S14 (docs/DEVELOPMENT_PLAN.md section 0); removed the lowercase `xtractor` alias; added exit 130 and redefined exit 5; deliverable is now a single self-contained arm64 macOS binary with embedded minimal LGPL ffmpeg and a bundled JS runtime (reverses OQ2); added `--self-update` and the distribution plan (section 9).
 - v0.1 (2026-10-22): initial draft.
 
@@ -48,7 +49,7 @@ What YouTube actually serves (as exposed by yt-dlp):
 
 **Default: 44,100 Hz, M4A (AAC-LC).** Rationale: it matches the native stream, so the default path can stream-copy without re-encoding or resampling (no quality loss, fastest), it is the music/consumer standard, and M4A plays everywhere.
 **Copy rule (S2):** the selector prefers an AAC stream whose sample rate equals the target. Stream-copy happens only when the source rate equals the target and no `--audio-quality` was given. If no such stream exists (YouTube sometimes serves only 48 kHz AAC), Xtractor transcodes to AAC with resampling and says so on stderr; this is a notice, not an error.
-**Alternates via `--sample-rate`:** 22050, 32000, 44100, 48000, 88200, 96000. Rates above 48000 are accepted but print a warning that the source is ≤48 kHz and the result is upsampled. Any other value is rejected with the list of valid values.
+**Alternates via `--sample-rate`:** 22050, 32000, 44100, 48000, 88200, 96000. Rates above 48000 are accepted for `m4a`, `flac` and `wav` (opus is fixed at 48000) but print a warning that the source is ≤48 kHz and the result is upsampled; `mp3` is limited to 48000 (88200 and 96000 are a usage error, exit 2, because MP3 does not define those rates). Any other value is rejected with the list of valid values.
 
 ### 3.2 Audio formats
 | `--audio-format` | Codec | Notes |
@@ -74,6 +75,10 @@ YouTube serves video and audio separately above 360p (DASH), so a download means
 - `--resolution` `360|480|720|1080|1440|2160|best` (default `1080`). If the requested height is unavailable in the chosen format, pick the highest below it and say so. Requesting >1080 (or `best` when the best is >1080) with `mp4` auto-selects the best available codec (VP9/AV1) and switches the container to `mkv` (announced on stderr) unless `--strict-format` is given, in which case it fails with exit 6. Because this depends on the available streams, the decision is made after probing, not at argument time (S10).
 - `webm` (S11) is restricted to VP9/AV1 video + Opus audio. If no such stream exists at or below the height, `--strict-format` gives exit 6; otherwise the container falls back to `mkv` with an announcement.
 - `--codec` is out of scope for v1; codec follows the format/resolution rules above.
+- Ties between otherwise equal video streams prefer progressive DASH over HLS (m3u8).
+
+### 3.4 Audio track selection (multi-language videos)
+Many videos carry several audio tracks (auto-dubbing). Xtractor always selects the **original-language** track: among audio-only streams it keeps those with the highest yt-dlp `language_preference` (YouTube marks the original 10 and dubs -1) or, lacking that, a format note containing "original" / "(default)"; only then does it rank by bitrate/codec. Non-DRC (plain) streams beat DRC variants. The same rule applies to the audio muxed into `-v` output. There is no option to choose another language in v1.
 
 ## 4. Command-line interface
 
@@ -108,7 +113,7 @@ General:
       --list-formats       Show available streams for URL (table on stdout) and exit
       --no-playlist        Accepted no-op: single-video handling is already the default
       --self-update        Update the Xtractor binary from the latest GitHub release and exit
-      --version            Print version (and bundled yt-dlp/ffmpeg/JS runtime versions) and exit
+      --version            Print Xtractor, yt-dlp and bundled ffmpeg/JS runtime versions and exit
   -h, --help               Show this help and exit
 
 Exit codes: 0 ok, 1 internal, 2 usage, 3 unavailable, 4 network, 5 bundled tool missing,
@@ -122,10 +127,10 @@ Examples:
 
 ### CLI rules
 1. `-h`/`--help` prints the above (accurate to the implemented options, auto-generated from the parser so it cannot drift), exit 0, works with no network and no ffmpeg present.
-2. Exactly one of `-a` / `-v` for download mode. Neither or both → usage error, exit 2. `--list-formats` (S7) is an informational mode: it needs only a URL, requires no mode flag, prints its table to stdout, produces no file, needs no ffmpeg and exits 0. `--self-update`, `--version` and `-h` likewise need no mode or URL.
+2. Exactly one of `-a` / `-v` for download mode. Neither or both → usage error, exit 2. `--list-formats` (S7) is an informational mode: it needs only a URL, requires no mode flag, prints its table to stdout, produces no file, needs no ffmpeg and exits 0. `--self-update`, `--version` and `-h` likewise need no mode or URL. `--self-update` accepts no other argument (exit 2).
 3. Audio options with `-v` (or video options with `-a`) → usage error naming the offending flag.
 4. URL validation: accept `youtube.com/watch?v=`, `youtu.be/`, `youtube.com/shorts/`, `m.youtube.com`, `music.youtube.com`, `youtube.com/live/`. Reject non-YouTube hosts and malformed URLs before any network call. Strip tracking params.
-5. Output path (S6): `-o` is a directory if it exists as one, ends in a path separator, or has no extension; otherwise it is a full file path. A file path's extension must match the chosen format, else exit 2. `-o` as a file path combined with `-n` is exit 2. Filenames are sanitised for macOS/Linux/Windows.
+5. Output path (S6, validated before any network call): `-o` is a directory if it exists as one, ends in a path separator, or has no extension; otherwise it is a full file path. A file path's extension must match the chosen format, else exit 2. `-o` as a file path combined with `-n` is exit 2. Filenames are sanitised for macOS/Linux/Windows (control, bidi and other invisible characters are removed). A `-o` directory path that is (or lies below) a regular file is a usage error (exit 2); a directory that cannot be written is exit 7; a directory sitting at the final target path is exit 7, never a "skipped" file. Titles and other untrusted text are escaped before they are written to the terminal.
 6. Playlist (S14): a URL with `watch?v=X&list=Y` downloads only video X. `playlist?list=`, `/channel/…` and `/@handle` URLs exit 2 ("playlists are not supported in v1"). Both are pure URL-parse decisions made before any network call. `--no-playlist` is an accepted no-op.
 7. Progress: a single-line progress bar (percent, size, speed, ETA) on a TTY; plain periodic lines otherwise; nothing with `-q`. In download mode, progress goes to stderr and the final saved path is the **only** line on stdout so output can be piped (`$(Xtractor -a URL)`). If the file already exists and `--overwrite` is not given (S5), the existing path is still printed to stdout, "exists, skipping" goes to stderr, exit 0.
 8. `-q` together with `--verbose` is a usage error, exit 2 (S9).
@@ -155,11 +160,11 @@ Examples:
 | F5 | Validate arguments up front, fail fast with actionable messages | Must |
 | F6 | Embed metadata (title, artist/channel, date, source URL) in audio files where the container supports it; embed in video MP4/MKV | Should |
 | F7 | `--list-formats` | Should |
-| F8 | Retry transient network failures (3 attempts, exponential backoff) and resume partial downloads | Should |
+| F8 | Retry transient network failures (3 retries, exponential backoff); a dropped connection resumes the partial download **within the same run**. An interrupted or failed run starts over (F9/F10 take priority: no partial files remain) | Should |
 | F9 | Write to a temp file and atomically rename on success; clean up on failure/Ctrl-C | Must |
 | F10 | Clean Ctrl-C handling (exit 130, no partial files left) | Must |
-| F11 | Config file (`~/.config/xtractor/config.toml`) for default overrides; CLI wins | Could |
-| F12 | Shell completions (zsh/bash) | Could |
+| F11 | Config file (`~/.config/xtractor/config.toml`) for default overrides; CLI wins | Could, **deferred (not in v1)** |
+| F12 | Shell completions (zsh/bash) | Could, **deferred (not in v1)** |
 | F13 | `--self-update`: replace the binary with the latest GitHub release after verifying its SHA-256 | Should |
 | F14 | Single self-contained arm64 macOS binary with embedded ffmpeg and JS runtime (section 6, 9) | Must |
 
@@ -167,14 +172,14 @@ Examples:
 
 - **Platforms:** the v1 deliverable is **macOS on Apple Silicon (arm64) only**. Intel Macs, Linux and Windows are out of scope for the binary; the Python source remains portable and installable with `pipx` for developers.
 - **Build, don't rebuild:** use the maintained open-source **yt-dlp** for stream extraction (YouTube changes its delivery frequently; reimplementing extraction is not viable) and **ffmpeg** for muxing/transcoding/resampling. Xtractor is the opinionated, simple front end with the defaults and validation above.
-- **Single self-contained binary (reverses OQ2):** the deliverable is one arm64 Mach-O executable built with **PyInstaller `--onefile`** (Nuitka is the alternative if the spike shows unacceptable startup or size). It embeds Python, yt-dlp (`yt-dlp[default]`, which brings the `yt-dlp-ejs` component that PyPI yt-dlp otherwise lacks), a **minimal LGPL ffmpeg/ffprobe** and a **JS runtime**.
-  - *ffmpeg:* custom build without `--enable-gpl` / `--enable-nonfree`; encoders/decoders limited to aac, libmp3lame, libopus, flac, pcm; muxers limited to mp4, matroska, webm, ogg, wav (plus matching demuxers/protocols needed for local files). Embedded in the binary and extracted on first run to `~/Library/Caches/Xtractor/<version>-<sha8>/`, verified by hash on each start. An `ffmpeg` found on `$PATH` is preferred when present (and recent enough: it must provide the encoders above, else fall back to the embedded one). LGPL obligations (licence text, source offer, dynamic-replaceability via the `$PATH` override) are documented in the README.
-  - *JS runtime:* since 2025.11.12 yt-dlp needs an external JavaScript runtime to solve YouTube challenges. Supported: deno >= 2.3 (default/recommended), node >= 22, quickjs/quickjs-ng (slow, can take minutes, and unsandboxed), bun (deprecated). The runtime is a **build parameter** (`JS_RUNTIME=deno|quickjs-ng`): **deno preferred, quickjs-ng fallback**, final choice decided by the packaging spike (docs/SPIKE_PACKAGING.md) on size, speed and signing behaviour. It is embedded and extracted to the same cache directory and passed to yt-dlp explicitly; a user-installed runtime on `$PATH` is not required.
-- **Dependency handling:** locate/extract ffmpeg and the JS runtime at the start of download operations (not for `-h`/`--version`/`--list-formats` where not needed); if missing or corrupt and re-extraction fails, print an actionable message and exit 5. yt-dlp is updated by releasing a new Xtractor build (and `--self-update`); extraction failures that look like stale-extractor issues suggest running `Xtractor --self-update` (S12; for source installs `pipx upgrade Xtractor`).
+- **Single self-contained binary (reverses OQ2):** the deliverable is one arm64 Mach-O executable built with **PyInstaller `--onefile`** (Nuitka is the alternative if the spike shows unacceptable startup or size). It embeds Python, yt-dlp (`yt-dlp[default]`, which brings the `yt-dlp-ejs` component that PyPI yt-dlp otherwise lacks), a **minimal LGPL ffmpeg** (the `ffmpeg` executable only; no ffprobe) and a **JS runtime**.
+  - *ffmpeg:* custom build without `--enable-gpl` / `--enable-nonfree`; encoders/decoders limited to aac, libmp3lame, libopus, flac, pcm; muxers limited to mp4, matroska, webm, ogg, wav (plus matching demuxers/protocols needed for local files). Embedded in the binary and extracted on first run to `~/Library/Caches/Xtractor/<version>-<sha8>/`, verified by hash on each start. **Tool precedence:** the embedded ffmpeg and JS runtime are used first, for reproducible behaviour with a known-good build; setting `XTRACTOR_USE_SYSTEM_TOOLS=1` makes Xtractor prefer `ffmpeg` and a JS runtime from `$PATH` (falling back to the embedded copies). Outside a bundled build (pipx install) only `$PATH` is used. A deno or node runtime found on `$PATH` must be deno >= 2.3 / node >= 22, else exit 5 with the required version. The build enables a few more decoders/encoders/filters than the minimal list above (vorbis, alac, webp, png, mjpeg, loudnorm, mpegts; see docs/BUILD_NOTES.md). LGPL obligations (licence text, source offer, replaceability through `XTRACTOR_USE_SYSTEM_TOOLS=1`) are documented in the README.
+  - *JS runtime:* since 2025.11.12 yt-dlp needs an external JavaScript runtime to solve YouTube challenges. Supported: deno >= 2.3 (default/recommended), node >= 22, quickjs/quickjs-ng (slow, can take minutes, and unsandboxed), bun (deprecated). The runtime is a **build parameter** (`JS_RUNTIME=deno|quickjs-ng`): **deno preferred, quickjs-ng fallback**, final choice decided by the packaging spike (docs/SPIKE_PACKAGING.md) on size, speed and signing behaviour. It is embedded and extracted to the same cache directory and passed to yt-dlp explicitly; a user-installed runtime on `$PATH` is not required and is only used with `XTRACTOR_USE_SYSTEM_TOOLS=1` (or in a source install).
+- **Dependency handling:** locate/extract ffmpeg and the JS runtime at the start of download operations (not for `-h`/`--version`/`--list-formats` where not needed); if missing or corrupt and re-extraction fails, print an actionable message and exit 5. yt-dlp is updated by releasing a new Xtractor build (and `--self-update`); extraction failures that look like stale-extractor issues suggest running `Xtractor --self-update` (S12; for source installs `pipx upgrade Xtractor`); the hint text depends on whether Xtractor runs as the frozen binary. YouTube's "confirm you're not a bot" challenge exits 3 with its own message and the same update hint.
 - **Language / packaging:** Python >=3.10 (3.12 for the binary), `pyproject.toml` (hatchling, src layout), single console-script `Xtractor`, dependency `yt-dlp[default]>=<release current at implementation time>` with no upper cap (S12); CI keeps a lock for reproducibility plus a scheduled "latest yt-dlp" job.
 - **Startup and size budgets (targets, to be confirmed by the spike):** `Xtractor -h` and `--version` cold start <= 1.5 s, warm <= 0.5 s on an M-series Mac (the `--onefile` unpack cost; fall back to `--onedir`-inside-tarball or Nuitka if exceeded); binary <= 120 MB with deno (<= 70 MB with quickjs-ng).
 - **Performance:** no added overhead beyond the underlying download; default audio path involves no re-encode.
-- **Security:** never shell out with unsanitised strings (argument lists only); no credentials or cookies handled in v1; no telemetry. The only network access besides YouTube is `--self-update`, which contacts GitHub releases only when the user runs it, over HTTPS, and verifies a SHA-256 checksum before replacing the binary.
+- **Security:** never shell out with unsanitised strings (argument lists only); no credentials or cookies handled in v1; no telemetry; yt-dlp plugin auto-loading is disabled (no third-party code is imported from user config dirs, the executable directory or `sys.path`); the `--self-update` checksum is fetched from the same release over HTTPS, so it detects corruption and tampering in transit but is not a signature. The only network access besides YouTube is `--self-update`, which contacts GitHub releases only when the user runs it, over HTTPS, and verifies a SHA-256 checksum before replacing the binary.
 - **Testing:** unit tests for argument validation, URL parsing, format selection logic, filename sanitising; integration tests with yt-dlp/ffmpeg mocked; a small opt-in live smoke test against a public-domain / Creative Commons video, excluded from default CI.
 - **Quality bar:** type-checked, linted, ≥85% line coverage on non-I/O logic; `README` with install, usage and troubleshooting.
 
@@ -197,7 +202,7 @@ Examples:
 ## 8. Decisions and open questions
 Resolved:
 - OQ1 Distribution: GitHub release tarball + Homebrew tap (section 9); PyPI optional.
-- OQ2 Bundle ffmpeg: **yes** (minimal LGPL build, embedded; `$PATH` ffmpeg preferred). Reverses v0.1.
+- OQ2 Bundle ffmpeg: **yes** (minimal LGPL build, embedded and used first; `XTRACTOR_USE_SYSTEM_TOOLS=1` prefers `$PATH`). Reverses v0.1.
 - OQ3 Sample-rate default: global 44100, opus 48000 (S3).
 - OQ4 Windows/Linux: out of scope for the binary; source remains portable, not CI-gated.
 

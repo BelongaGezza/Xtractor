@@ -216,6 +216,7 @@ def test_js_runtime_bundled_first_then_system(
     env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     deno = _fake_path_tool(tmp_path / "bin", "deno")
+    monkeypatch.setattr(tools, "_runtime_version", lambda path: (2, 5))  # PATH runtimes are gated
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
     rt = tools.locate_js_runtime()
     assert rt.name == "quickjs"

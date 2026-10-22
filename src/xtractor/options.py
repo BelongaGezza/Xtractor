@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from argparse import Namespace
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 from .errors import UsageError
 from .paths import looks_like_file, validate_template
@@ -88,7 +88,7 @@ def _resolve_audio(ns: Namespace, warnings: list[str]) -> AudioOptions:
         raise UsageError(
             f"invalid --audio-format {fmt_raw!r}; valid formats: {', '.join(AUDIO_FORMATS)}"
         )
-    fmt: AudioFmt = fmt_l  # type: ignore[assignment]
+    fmt = cast(AudioFmt, fmt_l)  # validated against AUDIO_FORMATS above
 
     rate = DEFAULT_SAMPLE_RATE
     if ns.sample_rate is not None:
@@ -144,7 +144,7 @@ def _resolve_video(ns: Namespace) -> VideoOptions:
         raise UsageError(
             f"invalid --video-format {ns.video_format!r}; valid formats: {', '.join(VIDEO_FORMATS)}"
         )
-    fmt: VideoFmt = fmt_l  # type: ignore[assignment]
+    fmt = cast(VideoFmt, fmt_l)  # validated against VIDEO_FORMATS above
     return VideoOptions(
         max_height=None if res == "best" else int(res),
         fmt=fmt,

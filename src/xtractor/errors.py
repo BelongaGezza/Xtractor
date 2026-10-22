@@ -33,7 +33,17 @@ EXIT_CODE_TABLE: tuple[tuple[int, str], ...] = (
     (EXIT_INTERRUPTED, "Interrupted (Ctrl-C / SIGTERM)"),
 )
 
-UPDATE_HINT = "try updating yt-dlp: pipx upgrade Xtractor"
+UPDATE_HINT_SOURCE = "try updating yt-dlp: pipx upgrade Xtractor"
+UPDATE_HINT_BINARY = "try updating: Xtractor --self-update (or brew upgrade xtractor)"
+
+
+def update_hint() -> str:
+    """How to get a newer yt-dlp: the single binary updates itself, source installs use pipx."""
+    return UPDATE_HINT_BINARY if getattr(sys, "frozen", False) else UPDATE_HINT_SOURCE
+
+
+#: Kept for callers/tests that want the source-install wording.
+UPDATE_HINT = UPDATE_HINT_SOURCE
 
 
 class XtractorError(Exception):
@@ -90,6 +100,9 @@ _FS_ERRNOS = frozenset(
         errno.EROFS,
         errno.EDQUOT,
         errno.ENAMETOOLONG,
+        errno.EEXIST,
+        errno.ENOTDIR,
+        errno.EISDIR,
     }
 )
 
@@ -106,7 +119,6 @@ _UNAVAILABLE_PATTERNS = (
     "sign in to confirm your age",
     "age-restricted",
     "confirm your age",
-    "sign in to confirm you",  # "...you're not a bot"
     "members-only",
     "members only",
     "join this channel",
@@ -116,7 +128,13 @@ _UNAVAILABLE_PATTERNS = (
     "this live event will begin",
     "live stream recording is not available",
     "is live",
+    "requested format is not available",
+    "requires payment",
+    "not available on this app",
+    "offline.",
 )
+
+_BOT_CHECK = "not a bot"
 
 _FS_PATTERNS = (
     "no space left on device",
@@ -144,7 +162,13 @@ _NETWORK_PATTERNS = (
     "transporterror",
 )
 
-_JS_RUNTIME_RE = re.compile(r"(javascript|js) runtime|\bdeno\b|\bnode\.?js\b", re.IGNORECASE)
+# yt-dlp's own wording only ("No supported JavaScript runtime could be found"); loose
+# keywords such as "deno" or "node" must not turn unrelated errors into exit 5.
+_JS_RUNTIME_RE = re.compile(
+    r"no supported (?:javascript|js) runtime|(?:javascript|js) runtime[^.]{0,60}"
+    r"(?:not found|missing|required|unavailable|could not be found)",
+    re.IGNORECASE,
+)
 _FFMPEG_RE = re.compile(r"ffmpeg|ffprobe|avconv", re.IGNORECASE)
 _NETWORK_TYPES = frozenset(
     {
@@ -207,9 +231,11 @@ def classify_exception(exc: BaseException, *, video_id: str | None = None) -> Xt
             f"your ffmpeg build lacks a required encoder: {text.strip()}",
             hint="install a full ffmpeg build",
         )
-    if _JS_RUNTIME_RE.search(text) and ("no " in low or "missing" in low or "not " in low):
+    yt_names = {"DownloadError", "ExtractorError", "GeoRestrictedError", "UnavailableVideoError"}
+    if names & yt_names and _JS_RUNTIME_RE.search(text):
         return MissingDependency(
-            "a JavaScript runtime is required to read this video", hint="install deno or node"
+            "a JavaScript runtime is required to read this video",
+            hint="install deno (>= 2.3) or node (>= 22)",
         )
     if "ffmpeg" in low and (
         "not found" in low or "not installed" in low or "is not available" in low
@@ -224,13 +250,25 @@ def classify_exception(exc: BaseException, *, video_id: str | None = None) -> Xt
 
     is_yt_error = bool(names & {"DownloadError", "ExtractorError", "GeoRestrictedError"})
     if is_yt_error or "UnavailableVideoError" in names:
+        if _BOT_CHECK in low:
+            return VideoUnavailable(
+                f"YouTube is asking to confirm you are not a bot{suffix}; the video cannot be "
+                "read right now",
+                hint=f"wait and retry, switch network, or {update_hint()}",
+            )
+        if "http error 403" in low:
+            return InternalError(
+                f"extraction failed{suffix}: {_clean_ytdlp_message(text)} "
+                "(YouTube refused the stream request; the extractor is probably out of date)",
+                hint=update_hint(),
+            )
         if "GeoRestrictedError" in names or any(p in low for p in _UNAVAILABLE_PATTERNS):
             reason = _clean_ytdlp_message(text)
             return VideoUnavailable(f"video unavailable{suffix}: {reason}")
         if names & _NETWORK_TYPES or any(p in low for p in _NETWORK_PATTERNS):
             return NetworkError(f"network error{suffix}: {_clean_ytdlp_message(text)}")
         return InternalError(
-            f"extraction failed{suffix}: {_clean_ytdlp_message(text)}", hint=UPDATE_HINT
+            f"extraction failed{suffix}: {_clean_ytdlp_message(text)}", hint=update_hint()
         )
 
     if names & _NETWORK_TYPES or isinstance(inner, TimeoutError):

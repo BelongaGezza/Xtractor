@@ -10,7 +10,6 @@ import traceback
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, NoReturn
 
-from . import __version__
 from .errors import (
     EXIT_CODE_TABLE,
     EXIT_INTERNAL,
@@ -34,7 +33,7 @@ from .options import (
     Options,
     build_options,
 )
-from .paths import sigterm_as_interrupt
+from .paths import check_output_target, sigterm_as_interrupt
 from .ui import Reporter
 
 if TYPE_CHECKING:  # heavy modules are imported inside the functions that need them
@@ -49,6 +48,12 @@ LEGAL_NOTICE = (
     "permission, or lawful personal archival). Xtractor does not and will not circumvent "
     "DRM; DRM-protected streams are refused."
 )
+
+ENVIRONMENT = """\
+Environment:
+  XTRACTOR_USE_SYSTEM_TOOLS=1  Prefer ffmpeg and a JavaScript runtime from your PATH over the
+                               copies bundled in the binary (default: bundled tools first).
+"""
 
 EXAMPLES = """\
 Examples:
@@ -66,7 +71,7 @@ def _exit_code_text() -> str:
 
 
 def epilog() -> str:
-    return f"{EXAMPLES}\n{_exit_code_text()}\n\n{textwrap.fill(LEGAL_NOTICE, 98)}"
+    return f"{EXAMPLES}\n{ENVIRONMENT}\n{_exit_code_text()}\n\n{textwrap.fill(LEGAL_NOTICE, 98)}"
 
 
 class _SpecFormatter(argparse.RawDescriptionHelpFormatter):
@@ -77,6 +82,27 @@ class _SpecFormatter(argparse.RawDescriptionHelpFormatter):
             return super()._format_action_invocation(action)
         metavar = self._format_args(action, self._get_default_metavar_for_optional(action))
         return ", ".join(action.option_strings) + " " + metavar
+
+
+class _VersionAction(argparse.Action):
+    """``--version``: Xtractor plus bundled tool versions, resolved lazily (no subprocess)."""
+
+    def __init__(self, option_strings: Sequence[str], dest: str, **kwargs: object) -> None:
+        super().__init__(
+            option_strings, dest, nargs=0, help="Print Xtractor and bundled tool versions and exit"
+        )
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        from .version import version_text
+
+        sys.stdout.write(version_text() + "\n")
+        parser.exit()
 
 
 class _Parser(argparse.ArgumentParser):
@@ -109,7 +135,10 @@ def build_parser() -> argparse.ArgumentParser:
     audio.add_argument(
         "--sample-rate",
         metavar="HZ",
-        help=f"{rates}  [default: {DEFAULT_SAMPLE_RATE}; opus: 48000]",
+        help=(
+            f"{rates}  [default: {DEFAULT_SAMPLE_RATE}; opus: 48000; mp3: at most 48000, "
+            "higher rates are rejected]"
+        ),
     )
     audio.add_argument(
         "--audio-format",
@@ -184,12 +213,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Update the Xtractor binary from the latest GitHub release and exit",
     )
-    gen.add_argument(
-        "--version",
-        action="version",
-        version=f"{PROG} {__version__}",
-        help="Print version and exit",
-    )
+    gen.add_argument("--version", action=_VersionAction)
     gen.add_argument("-h", "--help", action="help", help="Show this help and exit")
     return p
 
@@ -205,7 +229,9 @@ def parse_args(argv: Sequence[str] | None = None) -> Options:
 
 
 def _error(message: str) -> None:
-    print(f"{PROG}: error: {message}", file=sys.stderr)
+    from .ui import safe_text
+
+    print(f"{PROG}: error: {safe_text(message)}", file=sys.stderr)
 
 
 def _emit(text: str) -> None:
@@ -234,15 +260,24 @@ def _build_deps(opts: Options, reporter: Reporter) -> Deps:
     )
 
 
+def _flag_for(dest: str) -> str:
+    for action in build_parser()._actions:
+        if action.dest == dest and action.option_strings:
+            return action.option_strings[-1]
+    return dest
+
+
 def _self_update(ns: argparse.Namespace) -> int:
     """``--self-update`` is a standalone mode: no URL or other options (needs no tools)."""
-    others = [
-        flag
-        for dest, flag in (("audio", "-a"), ("video", "-v"), ("list_formats", "--list-formats"))
-        if getattr(ns, dest)
-    ]
-    if ns.url is not None or others:
-        raise UsageError("--self-update cannot be combined with a URL or other modes")
+    defaults = vars(build_parser().parse_args([]))
+    given = sorted(
+        dest
+        for dest, value in vars(ns).items()
+        if dest != "self_update" and value != defaults[dest]
+    )
+    if given:
+        names = ", ".join("URL" if d == "url" else _flag_for(d) for d in given)
+        raise UsageError(f"--self-update cannot be combined with other arguments ({names})")
     from .selfupdate import run_self_update
 
     return run_self_update()
@@ -251,6 +286,7 @@ def _self_update(ns: argparse.Namespace) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run Xtractor and return the process exit code."""
     verbose = False
+    reporter: Reporter | None = None
     try:
         try:
             ns = parse_namespace(argv)
@@ -261,6 +297,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             code = exc.code
             return code if isinstance(code, int) else EXIT_OK
         verbose = opts.verbose
+
+        if not opts.list_formats:  # exit 2/7 before any network access
+            check_output_target(opts.output, output_is_file=opts.output_is_file)
 
         reporter = Reporter(quiet=opts.quiet, verbose=opts.verbose)
         for warning in opts.warnings:
@@ -276,10 +315,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _emit(str(run(opts, deps)))
         return EXIT_OK
     except KeyboardInterrupt:
+        if reporter is not None:
+            reporter.finish()
         print(f"\n{PROG}: interrupted", file=sys.stderr)
         return EXIT_INTERRUPTED
     except Exception as exc:
         err: XtractorError = classify_exception(exc)
+        if reporter is not None:
+            reporter.finish()  # an error mid-progress must start on its own line
         _error(str(err))
         if isinstance(err, UsageError):
             print(f"Try '{PROG} -h' for help.", file=sys.stderr)
