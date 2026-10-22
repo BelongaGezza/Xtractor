@@ -9,7 +9,7 @@ import pytest
 
 from tests.unit.fixtures import AAC_441, OPUS, standard_formats
 from xtractor import ffmpeg
-from xtractor.errors import InternalError, MissingDependency
+from xtractor.errors import FileSystemError, InternalError, MissingDependency
 from xtractor.formats import Tags, select_audio
 from xtractor.options import AudioOptions
 
@@ -107,7 +107,7 @@ def test_locate_falls_back_to_bundled(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert ffmpeg.locate_ffmpeg() == bundled
     monkeypatch.setattr(ffmpeg, "_bundled_ffmpeg", lambda: None)
     with pytest.raises(MissingDependency) as info:
-        ffmpeg.ensure_dependencies()
+        ffmpeg.locate_ffmpeg()
     assert info.value.exit_code == 5
 
 
@@ -117,6 +117,13 @@ def test_run_ffmpeg_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(InternalError, match="exit 1"):
         ffmpeg.run_ffmpeg(["/bin/sh", "-c", "echo bad >&2; exit 1"])
     ffmpeg.run_ffmpeg(["/bin/sh", "-c", "exit 0"], verbose=True)
+
+
+def test_run_ffmpeg_maps_encoder_and_disk_errors() -> None:
+    with pytest.raises(MissingDependency):
+        ffmpeg.run_ffmpeg(["/bin/sh", "-c", "echo 'Unknown encoder libopus' >&2; exit 1"])
+    with pytest.raises(FileSystemError):
+        ffmpeg.run_ffmpeg(["/bin/sh", "-c", "echo 'No space left on device' >&2; exit 1"])
 
 
 def test_run_never_uses_shell(monkeypatch: pytest.MonkeyPatch) -> None:

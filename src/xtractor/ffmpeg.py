@@ -14,7 +14,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from .errors import InternalError, MissingDependency, ffmpeg_install_hint
+from .errors import FileSystemError, InternalError, MissingDependency, ffmpeg_install_hint
 from .formats import AudioPlan, Tags
 from .options import AudioOptions
 
@@ -33,14 +33,6 @@ def locate_ffmpeg() -> Path:
     if bundled is not None and bundled.exists():
         return bundled
     raise MissingDependency("ffmpeg was not found", hint=ffmpeg_install_hint(sys.platform))
-
-
-def ensure_dependencies() -> None:
-    """Startup check for download modes (never called for -h/--version/--list-formats).
-
-    Later: also verify the JavaScript runtime (same exit code 5).
-    """
-    locate_ffmpeg()
 
 
 def build_audio_argv(
@@ -103,5 +95,13 @@ def run_ffmpeg(argv: Sequence[str], *, verbose: bool = False) -> None:
     except FileNotFoundError as exc:
         raise MissingDependency("ffmpeg was not found", hint=ffmpeg_install_hint()) from exc
     if proc.returncode != 0:
-        tail = (proc.stderr or "").strip().splitlines()[-5:]
+        stderr = proc.stderr or ""
+        low = stderr.lower()
+        if "unknown encoder" in low or ("encoder" in low and "not found" in low):
+            raise MissingDependency(
+                "your ffmpeg build lacks a required encoder", hint="install a full ffmpeg build"
+            )
+        if "no space left on device" in low:
+            raise FileSystemError("no space left on device")
+        tail = stderr.strip().splitlines()[-5:]
         raise InternalError(f"ffmpeg failed (exit {proc.returncode}): " + " | ".join(tail))

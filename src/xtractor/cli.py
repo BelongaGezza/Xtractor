@@ -16,12 +16,11 @@ from .errors import (
     EXIT_INTERNAL,
     EXIT_INTERRUPTED,
     EXIT_OK,
-    InternalError,
     UsageError,
     XtractorError,
     classify_exception,
 )
-from .ffmpeg import ensure_dependencies
+from .ffmpeg import run_ffmpeg
 from .options import (
     AUDIO_FORMATS,
     DEFAULT_AUDIO_FORMAT,
@@ -36,6 +35,11 @@ from .options import (
     Options,
     build_options,
 )
+from .paths import sigterm_as_interrupt
+from .pipeline import Deps, list_formats, run
+from .tools import ensure_dependencies
+from .ui import Reporter
+from .ytdlp import YtDlpExtractor
 
 PROG = "Xtractor"
 
@@ -194,6 +198,25 @@ def _error(message: str) -> None:
     print(f"{PROG}: error: {message}", file=sys.stderr)
 
 
+def _emit(text: str) -> None:
+    """The only writer to stdout: the saved path (or the --list-formats table)."""
+    print(text)  # stdout-ok
+
+
+def _build_deps(opts: Options, reporter: Reporter) -> Deps:
+    """Locate tools (exit 5 if missing) and wire the real extractor. Tests replace this."""
+    tools = ensure_dependencies(need_ffmpeg=not opts.list_formats, need_js=True)
+    extractor = YtDlpExtractor(
+        ffmpeg_location=tools.ffmpeg, js_runtime=tools.js_runtime, logger=reporter
+    )
+    return Deps(
+        extractor=extractor,
+        reporter=reporter,
+        run_ffmpeg=lambda argv: run_ffmpeg(argv, verbose=opts.verbose),
+        ffmpeg_bin=tools.ffmpeg if tools.ffmpeg is not None else "ffmpeg",
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run Xtractor and return the process exit code."""
     verbose = False
@@ -205,14 +228,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             return code if isinstance(code, int) else EXIT_OK
         verbose = opts.verbose
 
-        if not opts.quiet:
-            for warning in opts.warnings:
-                print(f"{PROG}: warning: {warning}", file=sys.stderr)
+        reporter = Reporter(quiet=opts.quiet, verbose=opts.verbose)
+        for warning in opts.warnings:
+            reporter.warn(warning)
 
-        if not opts.list_formats:
-            ensure_dependencies()
-
-        raise InternalError("downloading is not implemented yet")
+        deps = _build_deps(opts, reporter)
+        with sigterm_as_interrupt():
+            if opts.list_formats:
+                _emit(list_formats(opts, deps))
+            else:
+                _emit(str(run(opts, deps)))
+        return EXIT_OK
     except KeyboardInterrupt:
         print(f"\n{PROG}: interrupted", file=sys.stderr)
         return EXIT_INTERRUPTED
