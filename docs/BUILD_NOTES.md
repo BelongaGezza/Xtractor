@@ -64,14 +64,14 @@ Network protocols stay disabled (no ffmpeg-side HLS/DASH download, so live strea
 |---|---|---|---|
 | Binary size (quickjs-ng) | **18.6 MB** (tarball 18.5 MB) | <= 70 MB | met |
 | Binary size (deno) | 56.4 MB (tarball 56.1 MB) | <= 120 MB | met |
-| `--version` warm | median **0.86 s** (0.73-0.91) | <= 0.5 s | **BREACH** |
-| `--version` cold (first launch of a fresh copy) | median 0.98 s | <= 1.5 s | met |
-| `-h` warm | median **1.47 s** (1.39-1.52) | <= 0.5 s | **BREACH** |
-| `-h` cold (first launch of a fresh copy) | median **1.54 s** (1.46-1.63) | <= 1.5 s | **BREACH** (marginal) |
+| `--version` warm | median **0.38 s** (0.37-0.40); was 0.86 s | <= 0.5 s | met |
+| `--version` cold (first launch of a fresh copy) | median 0.53 s; was 0.98 s | <= 1.5 s | met |
+| `-h` warm | median **0.45 s** (0.41-0.46); was 1.47 s | <= 0.5 s | met (thin margin) |
+| `-h` cold (first launch of a fresh copy) | median 0.72 s; was 1.54 s | <= 1.5 s | met |
 | First launch right after a build | 4.9-5.2 s, once per freshly built file | n/a | one-off macOS scan |
 | First-run tool extraction (ffmpeg + qjs) | 35 ms (write + hash), 4 ms to re-verify | n/a | negligible |
-| Full audio extraction, `-a` m4a stream copy, 2.3 MB | **11.3 s** warm, 11.9 s with empty cache (qjs) | none in spec | see below |
-| Same with the deno build | 6.1 s warm, 8.7 s first run | | |
+| Full audio extraction, `-a` m4a stream copy, 2.3 MB | **6.1 s** warm (qjs binary, acceptance run); was 11.3 s | none in spec | see below |
+| Same, dev venv with quickjs-ng / deno on PATH | 4.85 s / 2.4 s; was 9.2 s / 4.45 s | | challenge solved once |
 
 "Cold" is a proxy: a fresh copy of the binary, first launch (new inode). A purged-cache cold start needs
 `sudo purge`, which I did not run (no system changes).
@@ -85,19 +85,43 @@ Network protocols stay disabled (no ffmpeg-side HLS/DASH download, so live strea
 - Done: `--version` has a fast path in `packaging/entry.py` (1.2 s -> 0.86 s); tools are in the PYZ; 40+ extension files removed.
 - The same code built `--onedir`: `-h` **0.10 s**, `--version` **0.05 s** (first launch 5.3 s once), 30 MB. So the
   per-launch unpack is the entire problem. Build it with `XTRACTOR_ONEDIR=1 XTRACTOR_STAGE=build/stage pyinstaller packaging/xtractor.spec`.
-- Remaining options, in order of effort: (1) make `cli.py` import `selfupdate`, `ytdlp`, `pipeline` lazily (the
-  tests monkeypatch those names on `xtractor.cli`, so they need a matching change; owner of cli.py/selfupdate.py): saves
-  about 0.5 s on `-h` (measured 1.46 -> 0.93 s on a reduced build); (2) ship the spec's own D1 fallback
-  (onedir inside the tarball, needs the self-update and Homebrew contract to change from one file to a directory);
-  (3) a tiny launcher that unpacks an onedir payload once into the cache and `exec`s it, which keeps one file and gives
-  about 0.1 s warm (not built: C launcher plus signing a binary with a trailing payload needs its own spike).
-  Recommendation: do (1) now and decide between (2) and (3) before the first release.
+- Update (post-fix, quickjs-ng build, RUNS=10): the budgets are met. Two changes did it, in this order:
+  1. `cli.py` imports `pipeline`, `selfupdate`, `ytdlp`, `tools`, `ffmpeg` inside the functions that need them (plus
+     `ui` -> `ytdlp` under `TYPE_CHECKING`, `shutil`/`tempfile` lazy in `paths.py`). `-h`/`--version` no longer load
+     subprocess, hashlib, ssl, shutil, tempfile or yt_dlp (`test_help_and_version_do_not_import_heavy_modules`
+     enforces it). `-h` warm 1.47 -> 0.74 s, `--version` 0.86 -> 0.70 s.
+  2. `packaging/xtractor.spec` excludes 12 more extension modules whose users have fallbacks or guards (`_lzma`+liblzma,
+     `_bz2`, `_pickle`, `_statistics`, `_sha1`, `_md5`, `_sha3`, `_multiprocessing`, `_posixshmem`, `mmap`, `resource`, `grp`),
+     verified against the extension modules a real `-a` run loads and by the 15-check acceptance run (15/15 pass).
+     Each file the bootloader unpacks costs about 15-20 ms per launch, so `-h` warm 0.74 -> 0.45 s, `--version` 0.70 -> 0.38 s.
+  The margin on `-h` warm is thin (0.41-0.46 s vs 0.5 s) and will shrink with every new extension module. `python -X importtime`
+  of `-h` is now about 23 ms of imports (argparse 4 ms, options/paths 14 ms): further wins can only come from fewer unpacked files.
+  strip/UPX were not applied (strip invalidates the signature, UPX is not allowed). The bootloader has no option to cache the unpack.
+- If the budget is lost again (a new dependency, or slower disks), the options are, in order of effort: (a) ship the
+  spec's D1 fallback, onedir inside the tarball (`-h` 0.10 s; needs the self-update and Homebrew contract to change from one
+  file to a directory); (b) a tiny launcher that unpacks an onedir payload once into `~/Library/Caches/Xtractor` and
+  `exec`s it (one file, about 0.1 s warm). NOT built and NOT adopted: it needs a C launcher with a trailing payload,
+  which breaks the ad-hoc/Developer ID signature of the file unless the payload is a signed Mach-O section, so it needs its own spike.
 
-### Audio time is dominated by JS challenge solving, not by packaging
+### Audio time was dominated by JS challenge solving, not by packaging (fixed)
 
-`-a` solves YouTube's JS challenge twice (probe, then download re-extracts): about 4.6 s each with quickjs-ng, about
-2 s with deno. `RUNTIME=deno` cuts the audio run from 11.3 s to 6.1 s for +38 MB. Passing the probe's info dict into the
-download (or enabling yt-dlp's challenge cache) would halve it for either runtime; that lives in `pipeline.py`/`ytdlp.py` flow design.
+Cause: `pipeline.run` calls `probe` and then `download`, and each used its own `YoutubeDL.extract_info(url)`, so the extractor
+ran twice and YouTube's JS challenge (n/sig) was solved twice (the `[jsc:...] Solving JS challenges` line appeared twice).
+Fix (`ytdlp.py`): `probe` calls `extract_info(url, download=False, process=False)` (the extractor's raw result, challenge solved
+here), keeps that dict per video id and builds `MediaInfo` from `process_ie_result(copy.deepcopy(raw), download=False)`.
+`download` then calls `process_ie_result(copy.deepcopy(raw), download=True)` on a fresh `YoutubeDL` carrying the download params: only
+format selection and the transfer run. Keeping the RAW dict matters: feeding back an already format-processed dict (default
+selector `bv*+ba`) made the next selection (`140`) inherit fields of the first one and YouTube returned HTTP 403. If probe returns a
+playlist the download falls back to a fresh extraction.
+
+| `-a` m4a copy, SkVqJ1SGeL0 (dev venv, runtime on PATH) | before | after |
+|---|---|---|
+| quickjs-ng 0.17.0 | 9.5 / 9.0 s | 4.9 / 4.8 s |
+| deno 2.9.8 | 4.5 / 4.4 s | 2.3 / 2.5 s |
+| quickjs binary, acceptance run | 11.3 s | 6.1 s |
+
+The solver now runs once (one `Solving JS challenges` line). Remaining time is quickjs-ng being about 2x slower than deno at the
+solve (+38 MB for deno).
 
 ## 4. Acceptance run (qjs build, `PATH=/usr/bin:/bin`, empty cache): 15/15 pass
 
@@ -107,8 +131,10 @@ embedded ffmpeg); `-v --resolution 1080 --video-format mkv` (h264 1080 + opus); 
 exist when the JS runtime works); Ctrl-C mid-download: exit 130, no files left in the output directory, no leaked `_MEI*`
 temp dir, no orphan child. The deno build also passes 15/15. Only video SkVqJ1SGeL0 was downloaded; all media is deleted by the script.
 
-Observation: the default m4a path picked format `140-drc` (dynamic-range-compressed AAC) as "bestaudio"; pipeline's
-format selector may want `140`/`bestaudio[format_note!*=DRC]`. Not a packaging matter, flagged for the owner.
+Observation (fixed): the default m4a path picked format `140-drc` (dynamic-range-compressed AAC) as best audio because its
+bitrate is marginally higher. `formats.select_audio` now ignores DRC variants (format_id ending `-drc`, or "DRC" in
+`format_note`/`format`) unless nothing else exists. Verified live on Caminandes 3 (SkVqJ1SGeL0): `Downloading 1 format(s): 140`,
+output aac LC 44100 Hz 128 kb/s, ffmpeg `-c:a copy`; media deleted afterwards.
 
 ## 5. Quarantined ad-hoc binary: what really happens (investigated on copies, nothing changed)
 

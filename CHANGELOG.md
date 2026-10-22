@@ -17,5 +17,13 @@ All notable changes are listed here. The format follows
 - Homebrew formula template and `packaging/homebrew/update_formula.sh`.
 - README with install, usage, option table, exit codes and troubleshooting.
 
+### Fixed
+- Audio extraction no longer prefers YouTube's dynamic-range-compressed `-drc` variants; plain
+  `140` is stream-copied at 44.1 kHz again.
+- The YouTube JS challenge is solved once per run instead of twice (`-a`: 9.2 s to 4.9 s with
+  quickjs-ng, 4.5 s to 2.4 s with deno).
+- Single-file binary start-up: `-h` 1.47 s to 0.45 s and `--version` 0.86 s to 0.38 s warm
+  (lazy imports in the CLI, 12 fewer unpacked extension modules); the 0.5 s budget is met.
+
 ### Changed
 - `-h` mode heading now lists the modes that need no `-a`/`-v`.
