@@ -8,7 +8,7 @@ import sys
 import textwrap
 import traceback
 from collections.abc import Sequence
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 from . import __version__
 from .errors import (
@@ -20,7 +20,6 @@ from .errors import (
     XtractorError,
     classify_exception,
 )
-from .ffmpeg import run_ffmpeg
 from .options import (
     AUDIO_FORMATS,
     DEFAULT_AUDIO_FORMAT,
@@ -36,11 +35,10 @@ from .options import (
     build_options,
 )
 from .paths import sigterm_as_interrupt
-from .pipeline import Deps, list_formats, run
-from .selfupdate import run_self_update
-from .tools import ensure_dependencies
 from .ui import Reporter
-from .ytdlp import YtDlpExtractor
+
+if TYPE_CHECKING:  # heavy modules are imported inside the functions that need them
+    from .pipeline import Deps
 
 PROG = "Xtractor"
 
@@ -217,6 +215,13 @@ def _emit(text: str) -> None:
 
 def _build_deps(opts: Options, reporter: Reporter) -> Deps:
     """Locate tools (exit 5 if missing) and wire the real extractor. Tests replace this."""
+    # Lazy: `-h`/`--version` must not pay for subprocess, hashlib, pipeline, ... (onefile
+    # start-up budget, docs/BUILD_NOTES.md).
+    from .ffmpeg import run_ffmpeg
+    from .pipeline import Deps
+    from .tools import ensure_dependencies
+    from .ytdlp import YtDlpExtractor
+
     tools = ensure_dependencies(need_ffmpeg=not opts.list_formats, need_js=True)
     extractor = YtDlpExtractor(
         ffmpeg_location=tools.ffmpeg, js_runtime=tools.js_runtime, logger=reporter
@@ -238,6 +243,8 @@ def _self_update(ns: argparse.Namespace) -> int:
     ]
     if ns.url is not None or others:
         raise UsageError("--self-update cannot be combined with a URL or other modes")
+    from .selfupdate import run_self_update
+
     return run_self_update()
 
 
@@ -258,6 +265,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         reporter = Reporter(quiet=opts.quiet, verbose=opts.verbose)
         for warning in opts.warnings:
             reporter.warn(warning)
+
+        from .pipeline import list_formats, run
 
         deps = _build_deps(opts, reporter)
         with sigterm_as_interrupt():

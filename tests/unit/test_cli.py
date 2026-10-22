@@ -131,7 +131,7 @@ def test_list_formats_needs_js_runtime_but_not_ffmpeg(
     fake_js = tmp_path / "deno"
     fake_js.write_text("#!/bin/sh\n")
     fake_js.chmod(0o755)
-    monkeypatch.setattr("xtractor.cli.YtDlpExtractor", lambda **kw: FakeExtractor())
+    monkeypatch.setattr("xtractor.ytdlp.YtDlpExtractor", lambda **kw: FakeExtractor())
     assert main(["--list-formats", URL]) == 0
     assert capsys.readouterr().out.startswith("ID")
 
@@ -153,7 +153,7 @@ def test_help_and_version_never_check_dependencies(
     def boom(**_: object) -> None:
         raise AssertionError("dependencies must not be resolved")
 
-    monkeypatch.setattr("xtractor.cli.ensure_dependencies", boom)
+    monkeypatch.setattr("xtractor.tools.ensure_dependencies", boom)
     assert main(["-h"]) == 0
     assert main(["--version"]) == 0
     assert main(["-a", "--sample-rate", "1", URL]) == 2  # usage errors come first
@@ -278,14 +278,14 @@ def test_build_deps_wires_tools(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     js = JsRuntime("deno", tmp_path / "deno")
     seen: dict[str, object] = {}
     monkeypatch.setattr(
-        cli, "ensure_dependencies", lambda **kw: seen.update(kw) or ToolPaths(ff, js)
+        "xtractor.tools.ensure_dependencies", lambda **kw: seen.update(kw) or ToolPaths(ff, js)
     )
     opts = cli.parse_args(["-a", URL])
     deps = cli._build_deps(opts, Reporter(stream=io.StringIO()))
     assert seen == {"need_ffmpeg": True, "need_js": True}
     assert deps.ffmpeg_bin == ff
     fl = cli.parse_args(["--list-formats", URL])
-    monkeypatch.setattr(cli, "ensure_dependencies", lambda **kw: ToolPaths(None, js))
+    monkeypatch.setattr("xtractor.tools.ensure_dependencies", lambda **kw: ToolPaths(None, js))
     assert cli._build_deps(fl, Reporter(stream=io.StringIO())).ffmpeg_bin == "ffmpeg"
 
 
@@ -314,3 +314,21 @@ def test_readme_documents_defaults_and_exit_codes() -> None:
     for fmt in (*AUDIO_FORMATS, *VIDEO_FORMATS, *RESOLUTIONS):
         assert fmt in readme
     assert "xattr -d com.apple.quarantine" in readme
+
+
+def test_help_and_version_do_not_import_heavy_modules() -> None:
+    """Onefile start-up budget: -h/--version must not load these (see docs/BUILD_NOTES.md)."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; from xtractor.cli import main\n"
+        "for a in (['--version'], ['-h']):\n"
+        "    main(a)\n"
+        "bad = [m for m in ('yt_dlp', 'xtractor.ytdlp', 'xtractor.pipeline', 'xtractor.selfupdate',"
+        " 'xtractor.tools', 'xtractor.bundle', 'xtractor.ffmpeg', 'subprocess', 'hashlib', 'ssl',"
+        " 'shutil', 'tempfile') if m in sys.modules]\n"
+        "sys.stderr.write(repr(bad))\n"
+    )
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+    assert r.stderr.strip().endswith("[]"), r.stderr

@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import signal
-import tempfile
 import unicodedata
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -138,6 +136,9 @@ def should_skip(path: Path, *, overwrite: bool) -> bool:
 @contextmanager
 def temp_workdir(parent: Path) -> Iterator[Path]:
     """Create ``parent/.Xtractor-<rand>/`` (same filesystem as the target) and always remove it."""
+    import shutil  # lazy: keeps -h/--version off the bz2/lzma extension modules
+    import tempfile
+
     parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix=TEMP_PREFIX, dir=parent))
     try:

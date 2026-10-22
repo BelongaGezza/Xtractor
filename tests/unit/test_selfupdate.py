@@ -298,7 +298,10 @@ def test_cli_self_update_rejects_other_args(capsys: pytest.CaptureFixture[str]) 
 def test_cli_self_update_success_prints_version(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr("xtractor.cli.run_self_update", lambda: (print("9.9.9"), 0)[1])  # stdout-ok
+    monkeypatch.setattr(
+        "xtractor.selfupdate.run_self_update",
+        lambda: (print("9.9.9"), 0)[1],  # stdout-ok
+    )
     assert main(["--self-update"]) == 0
 
 

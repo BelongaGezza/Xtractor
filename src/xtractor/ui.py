@@ -5,9 +5,10 @@ from __future__ import annotations
 import sys
 import time
 from collections.abc import Callable
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
 
-from .ytdlp import Progress
+if TYPE_CHECKING:
+    from .ytdlp import Progress
 
 PROG = "Xtractor"
 NON_TTY_PERCENT_STEP = 10
