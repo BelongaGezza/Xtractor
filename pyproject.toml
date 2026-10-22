@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "Xtractor"
+dynamic = ["version"]
+description = "Extract the audio or video track from a YouTube video."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Gerry Gillies" }]
+classifiers = [
+    "Environment :: Console",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Video",
+]
+dependencies = ["yt-dlp[default]>=2026.10.21"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov>=5", "mypy>=1.10", "ruff>=0.5", "pre-commit>=3"]
+
+[project.scripts]
+Xtractor = "xtractor.cli:console_main"
+
+[tool.hatch.version]
+path = "src/xtractor/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/xtractor"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "PT", "RUF"]
+
+[tool.mypy]
+strict = true
+files = ["src"]
+python_version = "3.10"
+
+[[tool.mypy.overrides]]
+module = ["yt_dlp", "yt_dlp.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "ffmpeg: needs a real ffmpeg binary",
+    "live: opt-in network test (XTRACTOR_LIVE=1)",
+]
+
+[tool.coverage.run]
+source = ["xtractor"]
+branch = true
+
+[tool.coverage.report]
+# Gate applies to the pure/non-I/O modules (see CI and `make`-less command in README).
+show_missing = true
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PT012", "PT018", "RUF001"]
