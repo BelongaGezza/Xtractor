@@ -12,9 +12,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .errors import FormatUnavailable, VideoUnavailable
-from .options import AudioOptions, VideoOptions
+from .options import DEFAULT_BITRATE, AudioOptions, VideoOptions
 
-DEFAULT_LOSSY_BITRATE = "128k"
+DEFAULT_LOSSY_BITRATE = DEFAULT_BITRATE
 _NOMINAL_RE = re.compile(r"^(\d{3,4})p")
 AUDIO_EXT = {"m4a": "m4a", "mp3": "mp3", "opus": "opus", "flac": "flac", "wav": "wav"}
 
@@ -34,6 +34,9 @@ class FormatInfo:
     filesize: int | None = None
     note: str = ""
     label: str = ""  # yt-dlp's descriptive ``format`` string
+    language: str | None = None
+    language_preference: float | None = None
+    protocol: str = ""
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> FormatInfo:
@@ -66,6 +69,9 @@ class FormatInfo:
             filesize=size,
             note=note,
             label=str(d.get("format") or ""),
+            language=str(d["language"]) if d.get("language") else None,
+            language_preference=num("language_preference"),
+            protocol=str(d.get("protocol") or ""),
         )
 
     # -- classification ---------------------------------------------------
@@ -77,6 +83,21 @@ class FormatInfo:
             or "drc" in self.note.lower()
             or "drc" in self.label.lower()
         )
+
+    @property
+    def original_rank(self) -> tuple[float, int]:
+        """Ranks the original-language track above dubs (YouTube multi-audio videos).
+
+        yt-dlp gives the original track ``language_preference`` 10 and dubs -1; the note
+        also says "original" / "(default)". Formats without language data rank 0.
+        """
+        note = self.note.lower()
+        marked = 1 if "original" in note or "(default)" in note else 0
+        return (self.language_preference or 0.0, marked)
+
+    @property
+    def is_hls(self) -> bool:
+        return "m3u8" in self.protocol
 
     @property
     def has_video(self) -> bool:
@@ -182,12 +203,25 @@ class AudioPlan:
     notices: tuple[str, ...] = ()
 
 
+def preferred_audio(cands: Sequence[FormatInfo]) -> list[FormatInfo]:
+    """Keep the original-language track and prefer plain streams over DRC variants.
+
+    Multi-audio (auto-dubbed) videos offer one stream per language at equal bitrate; picking
+    by bitrate alone returns a random dub. DRC variants are louder/compressed re-encodes of
+    the same track: only a last resort.
+    """
+    if not cands:
+        return []
+    top = max(f.original_rank for f in cands)
+    originals = [f for f in cands if f.original_rank == top]
+    return [f for f in originals if not f.is_drc] or originals
+
+
 def _audio_candidates(formats: Sequence[FormatInfo]) -> list[FormatInfo]:
     cands = [f for f in formats if f.audio_only and not f.has_drm]
     if not cands:
         raise VideoUnavailable("no downloadable audio streams found")
-    # DRC variants are louder/compressed re-encodes: only a last resort.
-    return [f for f in cands if not f.is_drc] or cands
+    return preferred_audio(cands)
 
 
 def _best(cands: Sequence[FormatInfo]) -> FormatInfo:
@@ -271,7 +305,8 @@ _CODEC_PREF = {"vp9": 3, "av1": 2, "avc1": 1, "other": 0}
 
 def _vkey(f: FormatInfo, *, prefer_avc: bool = False) -> tuple[float, ...]:
     pref = (1.0 if f.vfamily == "avc1" else 0.0) if prefer_avc else float(_CODEC_PREF[f.vfamily])
-    return (f.height or 0, f.fps or 0.0, pref, f.tbr or 0.0)
+    # Ties on height/fps/codec: prefer progressive DASH over HLS (m3u8) variants, then bitrate.
+    return (f.height or 0, f.fps or 0.0, pref, 0.0 if f.is_hls else 1.0, f.tbr or 0.0)
 
 
 def _plan(v: FormatInfo, a: FormatInfo, container: str, notices: list[str]) -> VideoPlan:
@@ -289,7 +324,7 @@ def select_video(formats: Sequence[FormatInfo], opts: VideoOptions) -> VideoPlan
     """Choose video and audio streams plus the output container (spec 3.3, plan 2.4)."""
     usable = [f for f in formats if not f.has_drm]
     vids = [f for f in usable if f.video_only and f.height]
-    auds = [f for f in usable if f.audio_only]
+    auds = preferred_audio([f for f in usable if f.audio_only])
     if not vids or not auds:
         return _muxed_fallback(usable, opts)
 

@@ -356,3 +356,59 @@ def test_drc_used_only_as_last_resort() -> None:
 
     plan = select_audio([AAC_441_DRC], A())
     assert plan.format_id == "140-drc" and plan.copy
+
+
+# ------------------------------------------------- Q-01: dubbed / multi-audio videos
+def _dubbed(reverse: bool = False) -> list[FormatInfo]:
+    from tests.unit.dubbed_fixture import DUBBED_AUDIO, DUBBED_VIDEO
+
+    fmts = [FormatInfo.from_dict(d) for d in DUBBED_AUDIO + DUBBED_VIDEO]
+    return fmts[::-1] if reverse else fmts
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_dubbed_m4a_picks_original_language_not_drc(reverse: bool) -> None:
+    plan = select_audio(_dubbed(reverse), A())
+    assert plan.format_id == "140-23"  # en-US original, plain (not 140-drc, not a dub)
+    assert plan.copy
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_dubbed_opus_picks_original(reverse: bool) -> None:
+    assert select_audio(_dubbed(reverse), A("opus", 48000)).format_id == "251-23"
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_dubbed_video_uses_original_audio(reverse: bool) -> None:
+    plan = select_video(_dubbed(reverse), V(1080, "mp4"))
+    assert plan.audio_format_id == "140-23"
+    plan = select_video(_dubbed(reverse), V(1080, "webm"))
+    assert plan.audio_format_id == "251-23"
+
+
+def test_original_marker_in_note_without_language_preference() -> None:
+    dub = FormatInfo("a", "m4a", acodec="mp4a.40.2", asr=44100, abr=130.0, note="German")
+    orig = FormatInfo(
+        "b", "m4a", acodec="mp4a.40.2", asr=44100, abr=129.0, note="English original (default)"
+    )
+    assert select_audio([dub, orig], A()).format_id == "b"
+    assert select_audio([orig, dub], A()).format_id == "b"
+
+
+def test_single_track_video_unaffected_by_language_ranking() -> None:
+    assert select_audio(standard_formats(), A()).format_id == "140"
+
+
+def test_video_audio_never_drc_when_plain_exists() -> None:
+    drc = FormatInfo("140-drc", "m4a", acodec="mp4a.40.2", asr=44100, abr=500.0, note="medium, DRC")
+    plan = select_video([*standard_formats(), drc], V(1080))
+    assert plan.audio_format_id != "140-drc"
+
+
+def test_hls_loses_ties_against_dash() -> None:
+    dash = FormatInfo("dash", "mp4", vcodec="avc1.640028", height=720, fps=30, tbr=1000.0)
+    hls = FormatInfo(
+        "hls", "mp4", vcodec="avc1.640028", height=720, fps=30, tbr=1500.0, protocol="m3u8_native"
+    )
+    plan = select_video([hls, dash, AAC_441], V(720))
+    assert plan.video_format_id == "dash"
