@@ -117,7 +117,6 @@ def run(opts: Options, deps: Deps) -> Path:
                     downloaded,
                     produced,
                     plan,
-                    opts.audio,
                     Tags.from_media(info, ref.canonical_url),
                     ffmpeg_bin=deps.ffmpeg_bin,
                 )

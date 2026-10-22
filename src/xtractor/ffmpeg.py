@@ -18,15 +18,6 @@ from pathlib import Path
 from . import bundle
 from .errors import FileSystemError, InternalError, MissingDependency, ffmpeg_install_hint
 from .formats import AudioPlan, Tags
-from .options import AudioOptions
-
-
-def _bundled_ffmpeg() -> Path | None:
-    """The embedded ffmpeg extracted to the cache, or ``None`` outside a bundled build.
-
-    Raises :class:`MissingDependency` if a bundle exists but cannot be extracted.
-    """
-    return bundle.bundled_asset_path("ffmpeg")
 
 
 def locate_ffmpeg() -> Path:
@@ -38,7 +29,7 @@ def locate_ffmpeg() -> Path:
     system = shutil.which("ffmpeg")
     if bundle.use_system_tools() and system:
         return Path(system)
-    bundled = _bundled_ffmpeg()
+    bundled = bundle.bundled_asset_path("ffmpeg")  # None outside a bundled build
     if bundled is not None and bundled.exists():
         return bundled
     if system:
@@ -50,15 +41,13 @@ def build_audio_argv(
     src: Path,
     dst: Path,
     plan: AudioPlan,
-    opts: AudioOptions,
     meta: Tags,
     *,
     ffmpeg_bin: str | Path = "ffmpeg",
 ) -> list[str]:
     """Build the ffmpeg argument list (never a shell string) for the audio step.
 
-    ``opts`` is accepted for interface stability; codec arguments are already
-    resolved in ``plan``.
+    Codec arguments are already resolved in ``plan``.
     """
     argv: list[str] = [
         str(ffmpeg_bin),

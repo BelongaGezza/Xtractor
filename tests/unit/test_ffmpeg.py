@@ -19,9 +19,7 @@ TAGS = Tags(title="Hello; rm -rf ~ #", artist="Chan", date="2024-01-31", url="ht
 def argv_for(fmt: str, rate: int, br: str | None = None, *, tags: Tags = TAGS) -> list[str]:
     opts = AudioOptions(rate, fmt, br)  # type: ignore[arg-type]
     plan = select_audio(standard_formats(), opts)
-    return ffmpeg.build_audio_argv(
-        Path("/t/src.m4a"), Path("/t/out.tmp." + plan.ext), plan, opts, tags
-    )
+    return ffmpeg.build_audio_argv(Path("/t/src.m4a"), Path("/t/out.tmp." + plan.ext), plan, tags)
 
 
 HEAD = [
@@ -93,7 +91,6 @@ def test_ffmpeg_bin_override() -> None:
         Path("a"),
         Path("b"),
         plan,
-        AudioOptions(44100, "m4a", None),
         Tags(),
         ffmpeg_bin=Path("/x/ffmpeg"),
     )
@@ -106,7 +103,7 @@ def test_locate_prefers_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     fake.write_text("#!/bin/sh\n")
     fake.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path))
-    monkeypatch.setattr(ffmpeg, "_bundled_ffmpeg", lambda: Path("/never"))
+    monkeypatch.setattr(ffmpeg.bundle, "bundled_asset_path", lambda k: Path("/never"))
     assert ffmpeg.locate_ffmpeg() == fake
 
 
@@ -114,9 +111,9 @@ def test_locate_falls_back_to_bundled(monkeypatch: pytest.MonkeyPatch, tmp_path:
     monkeypatch.setenv("PATH", "/nonexistent")
     bundled = tmp_path / "ffmpeg"
     bundled.write_text("x")
-    monkeypatch.setattr(ffmpeg, "_bundled_ffmpeg", lambda: bundled)
+    monkeypatch.setattr(ffmpeg.bundle, "bundled_asset_path", lambda k: bundled)
     assert ffmpeg.locate_ffmpeg() == bundled
-    monkeypatch.setattr(ffmpeg, "_bundled_ffmpeg", lambda: None)
+    monkeypatch.setattr(ffmpeg.bundle, "bundled_asset_path", lambda k: None)
     with pytest.raises(MissingDependency) as info:
         ffmpeg.locate_ffmpeg()
     assert info.value.exit_code == 5
@@ -179,7 +176,7 @@ def run_case(tmp_path: Path, src: Path, fmt: str, rate: int, fid_formats: list, 
     opts = AudioOptions(rate, fmt, br)  # type: ignore[arg-type]
     plan = select_audio(fid_formats, opts)
     dst = tmp_path / f"out.tmp.{plan.ext}"
-    ffmpeg.run_ffmpeg(ffmpeg.build_audio_argv(src, dst, plan, opts, TAGS))
+    ffmpeg.run_ffmpeg(ffmpeg.build_audio_argv(src, dst, plan, TAGS))
     return plan, probe(dst)
 
 

@@ -52,7 +52,6 @@ def test_no_bundle_outside_frozen_build(monkeypatch: pytest.MonkeyPatch) -> None
     assert bundle.bundle_source() is None
     assert bundle.bundled_asset_path("ffmpeg") is None
     assert bundle.bundled_js() is None
-    assert ffmpeg._bundled_ffmpeg() is None
     assert tools._bundled_js_runtime() is None
 
 
