@@ -60,9 +60,11 @@ markers = [
 [tool.coverage.run]
 source = ["xtractor"]
 branch = true
+omit = ["*/__main__.py"]
 
 [tool.coverage.report]
-# Gate applies to the pure/non-I/O modules (see CI and `make`-less command in README).
+# Gate for the whole package (measured 97%); used by `coverage report` in CI.
+fail_under = 95
 show_missing = true
 
 [tool.ruff.lint.per-file-ignores]

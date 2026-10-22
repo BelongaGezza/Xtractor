@@ -30,7 +30,7 @@ BUDGET = {"cold": 1.5, "warm": 0.5, "size_mb": 70.0 if label.startswith("quickjs
 work = tempfile.mkdtemp(prefix="xtractor-measure.")
 cache = os.path.join(work, "cache")
 env = {"HOME": os.environ["HOME"], "PATH": "/usr/bin:/bin", "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
-       "XTRACTOR_CACHE_DIR": cache}
+       "XTRACTOR_CACHE_DIR": cache, "XTRACTOR_ALLOW_OVERRIDES": "1"}
 
 def run(path, *args, e=None):
     t = time.perf_counter()

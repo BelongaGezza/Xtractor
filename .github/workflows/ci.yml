@@ -4,6 +4,13 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     strategy:
@@ -12,24 +19,29 @@ jobs:
         os: [macos-14, ubuntu-latest]
         python: ["3.10", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            constraints-ci.txt
       - name: Install ffmpeg (macOS)
         if: runner.os == 'macOS'
         run: brew install ffmpeg
       - name: Install ffmpeg (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - run: python -m pip install -e ".[dev]"
+      - run: python -m pip install -c constraints-ci.txt -e ".[dev]"
       - run: ruff check .
       - run: ruff format --check .
       - run: mypy --strict src
-      - name: Tests with coverage gate on non-I/O modules
-        run: >
-          pytest --cov=xtractor --cov-report=term-missing
-          --cov-config=pyproject.toml
-          && coverage report --fail-under=85
-          --include="*/xtractor/errors.py,*/xtractor/options.py,*/xtractor/urls.py,*/xtractor/formats.py,*/xtractor/paths.py,*/xtractor/cli.py"
+      - name: Tests with a package-wide coverage gate (fail_under in pyproject.toml)
+        run: |
+          pytest --cov=xtractor --cov-report=term-missing --cov-config=pyproject.toml
+          coverage report --rcfile=pyproject.toml

@@ -1,13 +1,20 @@
 name: Release
-# Tag v* builds the arm64 binary and publishes a GitHub release.
-# Pull requests touching packaging build the same artifacts as a dry run (nothing is published).
+# Tag vX.Y.Z[-rc.N] builds the arm64 binary, signs the checksums and publishes a GitHub release.
+# Pull requests touching packaging build the same artifacts as a dry run (nothing is signed or
+# published).
+#
+# One-time setup by the repository owner (see docs/BUILD_NOTES.md section 8):
+#   * environment "release" with required reviewers, holding the secret XTRACTOR_SIGNING_KEY
+#   * a tag protection ruleset for v*
+#   * optional: variable TAP_REPO and secret TAP_TOKEN (environment "release") for Homebrew
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]*.[0-9]*.[0-9]*"]
   pull_request:
     paths:
       - "scripts/**"
       - "packaging/**"
+      - "requirements-build.*"
       - ".github/workflows/release.yml"
   workflow_dispatch:
 
@@ -18,14 +25,35 @@ jobs:
   build:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
+            echo "tag '$GITHUB_REF_NAME' is not vMAJOR.MINOR.PATCH[-alpha|beta|rc.N]" >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "tagged commit is not on main; refusing to release" >&2
+            exit 1
+          fi
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
-      - run: python -m pip install -e ".[dev,build]"
+          cache: pip
+          cache-dependency-path: requirements-build.txt
+      - name: Install hash-locked build dependencies
+        run: |
+          python -m pip install --require-hashes --no-deps -r requirements-build.txt
+          python -m pip install --no-deps -e .
       - name: Quality gates
         run: |
           ruff check .
+          ruff format --check .
           mypy --strict src
           pytest
       - name: Tag matches package version
@@ -37,36 +65,74 @@ jobs:
             echo "tag $tag does not match xtractor.__version__ $pkg" >&2
             exit 1
           fi
+      - name: Build tools prerequisites
+        run: brew install pkgconf
       # Contract of scripts/build_binary.sh: writes dist/Xtractor,
-      # dist/Xtractor-<version>-macos-arm64.tar.gz and dist/SHA256SUMS.
+      # dist/Xtractor-<version>-macos-arm64.tar.gz, dist/SHA256SUMS and dist/BUILDINFO-*.json.
       - name: Build binary
         env:
           PYTHON: python
         run: ./scripts/build_binary.sh
-      - name: Smoke test
+      - name: Smoke test (offline)
         run: |
-          ./dist/Xtractor --version
+          want="Xtractor $(python -c 'import xtractor; print(xtractor.__version__)')"
+          [ "$(./dist/Xtractor --version | head -1)" = "$want" ]
           ./dist/Xtractor -h > /dev/null
           (cd dist && shasum -a 256 -c SHA256SUMS)
-      - uses: actions/upload-artifact@v4
+          # Extracts the embedded tools to a scratch cache, round-trips audio through the
+          # embedded ffmpeg, runs the embedded JS runtime. No network, scrubbed PATH.
+          env -i HOME="$HOME" PATH=/usr/bin:/bin TMPDIR="${RUNNER_TEMP}" \
+            XTRACTOR_SELFTEST=1 XTRACTOR_ALLOW_OVERRIDES=1 \
+            XTRACTOR_CACHE_DIR="${RUNNER_TEMP}/xtractor-selftest-cache" \
+            ./dist/Xtractor --xtractor-selftest
+      - name: Collect licence-compliance records
+        run: cp scripts/build_ffmpeg.sh scripts/common.sh dist/
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: release-assets
           path: |
             dist/Xtractor-*-macos-arm64.tar.gz
             dist/SHA256SUMS
+            dist/BUILDINFO-*.json
+            dist/build_ffmpeg.sh
+            dist/common.sh
           if-no-files-found: error
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
+    # Protected environment: required reviewers; holds XTRACTOR_SIGNING_KEY.
+    environment: release
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: release-assets
           path: assets
+      - name: Sign SHA256SUMS (Ed25519)
+        env:
+          XTRACTOR_SIGNING_KEY: ${{ secrets.XTRACTOR_SIGNING_KEY }}
+        run: |
+          if [ -z "$XTRACTOR_SIGNING_KEY" ]; then
+            echo "secret XTRACTOR_SIGNING_KEY is missing from the 'release' environment;" \
+              "a tag release must be signed (--self-update refuses unsigned releases)" >&2
+            exit 1
+          fi
+          (cd assets && shasum -a 256 -c SHA256SUMS)
+          python3 scripts/sign_release.py assets/SHA256SUMS assets/SHA256SUMS.sig
+      - name: Build provenance attestation
+        # Artifact attestations need a public repository (or GitHub Enterprise Cloud).
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-path: assets/Xtractor-*-macos-arm64.tar.gz
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -80,17 +146,20 @@ jobs:
 
   tap:
     # Optional: bump the Homebrew tap (needs a TAP_REPO variable "owner/homebrew-xtractor"
-    # and a TAP_TOKEN secret with write access to it). Skipped for pre-releases.
+    # and a TAP_TOKEN secret with contents:write on that repository only). Skipped for pre-releases.
     if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') && vars.TAP_REPO != ''
     needs: publish
     runs-on: ubuntu-latest
+    environment: release
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: release-assets
           path: assets
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: ${{ vars.TAP_REPO }}
           token: ${{ secrets.TAP_TOKEN }}

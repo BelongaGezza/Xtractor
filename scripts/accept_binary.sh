@@ -37,7 +37,7 @@ now()  { python3 -c 'import time; print(f"{time.time():.3f}")'; }
 # run_x ARGS... : run the binary in the scrubbed environment; sets RC, OUT (stdout), ERR (stderr).
 run_x() {
   env -i HOME="$HOME" PATH=/usr/bin:/bin TMPDIR="${TMPDIR:-/tmp}" XTRACTOR_CACHE_DIR="$CACHE" \
-    "$BIN" "$@" >"$WORK/out.txt" 2>"$WORK/err.txt"
+    XTRACTOR_ALLOW_OVERRIDES=1 "$BIN" "$@" >"$WORK/out.txt" 2>"$WORK/err.txt"
   RC=$?
   OUT="$(cat "$WORK/out.txt")"; ERR="$(cat "$WORK/err.txt")"
 }
@@ -128,7 +128,7 @@ python3 - "$BIN" "$WORK/c" "$URL" "$CACHE" "$WORK/ctrlc.txt" <<'PY'
 import os, signal, subprocess, sys, time
 binary, out, url, cache, report = sys.argv[1:6]
 env = {"HOME": os.environ["HOME"], "PATH": "/usr/bin:/bin", "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
-       "XTRACTOR_CACHE_DIR": cache}
+       "XTRACTOR_CACHE_DIR": cache, "XTRACTOR_ALLOW_OVERRIDES": "1"}
 p = subprocess.Popen([binary, "-v", "--resolution", "1080", "-o", out, url], env=env,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 def temp_bytes():

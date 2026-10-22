@@ -19,10 +19,11 @@ repo="${4:-}"
 
 [ -f "$tarball" ] || { echo "tarball not found: $tarball" >&2; exit 1; }
 [ -f "$formula" ] || { echo "formula not found: $formula" >&2; exit 1; }
-case "$version" in
-  [0-9]*.[0-9]*.[0-9]*) ;;
-  *) echo "invalid version: $version" >&2; exit 2 ;;
-esac
+# Strict semver: this value is substituted into the Ruby formula that Homebrew users execute.
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid version: $version" >&2; exit 2; }
+if [ -n "$repo" ]; then
+  [[ "$repo" =~ ^[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+$ ]] || { echo "invalid repo: $repo" >&2; exit 2; }
+fi
 
 sha="$(shasum -a 256 "$tarball" | awk '{print $1}')"
 
