@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m pip install -e ".[dev]"
+      - run: python -m pip install -e ".[dev,build]"
       - name: Quality gates
         run: |
           ruff check .
@@ -40,6 +40,8 @@ jobs:
       # Contract of scripts/build_binary.sh: writes dist/Xtractor,
       # dist/Xtractor-<version>-macos-arm64.tar.gz and dist/SHA256SUMS.
       - name: Build binary
+        env:
+          PYTHON: python
         run: ./scripts/build_binary.sh
       - name: Smoke test
         run: |
