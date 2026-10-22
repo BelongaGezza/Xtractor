@@ -37,6 +37,7 @@ from .options import (
 )
 from .paths import sigterm_as_interrupt
 from .pipeline import Deps, list_formats, run
+from .selfupdate import run_self_update
 from .tools import ensure_dependencies
 from .ui import Reporter
 from .ytdlp import YtDlpExtractor
@@ -99,7 +100,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("url", nargs="?", help=argparse.SUPPRESS, metavar="URL")
 
-    mode = p.add_argument_group("Mode (exactly one required)")
+    mode = p.add_argument_group(
+        "Mode (exactly one required, except for --list-formats, --self-update, --version, -h)"
+    )
     mode.add_argument("-a", "--audio", action="store_true", help="Extract audio only")
     mode.add_argument("-v", "--video", action="store_true", help="Download video (with audio)")
 
@@ -179,6 +182,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Treat URL with list= parameter as the single video (default behaviour)",
     )
     gen.add_argument(
+        "--self-update",
+        action="store_true",
+        help="Update the Xtractor binary from the latest GitHub release and exit",
+    )
+    gen.add_argument(
         "--version",
         action="version",
         version=f"{PROG} {__version__}",
@@ -188,10 +196,14 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def parse_namespace(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parse ``argv`` without validation. -h/--version raise SystemExit."""
+    return build_parser().parse_args(list(argv) if argv is not None else None)
+
+
 def parse_args(argv: Sequence[str] | None = None) -> Options:
     """Parse and validate ``argv``. Raises :class:`UsageError`; -h/--version raise SystemExit."""
-    ns = build_parser().parse_args(list(argv) if argv is not None else None)
-    return build_options(ns)
+    return build_options(parse_namespace(argv))
 
 
 def _error(message: str) -> None:
@@ -217,12 +229,27 @@ def _build_deps(opts: Options, reporter: Reporter) -> Deps:
     )
 
 
+def _self_update(ns: argparse.Namespace) -> int:
+    """``--self-update`` is a standalone mode: no URL or other options (needs no tools)."""
+    others = [
+        flag
+        for dest, flag in (("audio", "-a"), ("video", "-v"), ("list_formats", "--list-formats"))
+        if getattr(ns, dest)
+    ]
+    if ns.url is not None or others:
+        raise UsageError("--self-update cannot be combined with a URL or other modes")
+    return run_self_update()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run Xtractor and return the process exit code."""
     verbose = False
     try:
         try:
-            opts = parse_args(argv)
+            ns = parse_namespace(argv)
+            if ns.self_update:
+                return _self_update(ns)
+            opts = build_options(ns)
         except SystemExit as exc:  # -h / --version
             code = exc.code
             return code if isinstance(code, int) else EXIT_OK

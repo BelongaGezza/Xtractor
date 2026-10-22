@@ -78,7 +78,7 @@ def test_help_lists_every_option_and_default(capsys: pytest.CaptureFixture[str])
         "128k",
     ):
         assert default in text, default
-    assert "Mode (exactly one required):" in text
+    assert "Mode (exactly one required, except for" in text
     assert "Audio options (with -a):" in text
     assert "Video options (with -v):" in text
     assert "General:" in text
