@@ -12,6 +12,10 @@ function here reports "nothing bundled".
 
 Environment: ``XTRACTOR_CACHE_DIR`` overrides the cache root (tests, sandboxes);
 ``XTRACTOR_BUNDLE_DIR`` points at a bundle directory instead of the embedded blob (tests).
+Both are inert in a frozen release build unless ``XTRACTOR_ALLOW_OVERRIDES=1`` is also set,
+so a stray environment variable cannot substitute the embedded executables.
+The cache is private: directories are mode 0700, owned by the user and never symlinks;
+files are created with ``O_EXCL|O_NOFOLLOW``; stale ``<version>-<sha8>`` siblings are pruned.
 """
 
 from __future__ import annotations
@@ -22,8 +26,10 @@ import json
 import os
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -35,6 +41,10 @@ MANIFEST_NAME = "manifest.json"
 ENV_CACHE_DIR = "XTRACTOR_CACHE_DIR"
 ENV_BUNDLE_DIR = "XTRACTOR_BUNDLE_DIR"
 ENV_USE_SYSTEM = "XTRACTOR_USE_SYSTEM_TOOLS"
+ENV_ALLOW_OVERRIDES = "XTRACTOR_ALLOW_OVERRIDES"
+CODESIGN = "/usr/bin/codesign"
+#: Cache dirs younger than this are left alone when pruning (another version may be running).
+PRUNE_MIN_AGE_S = 3600
 
 _HINT = f"set {ENV_USE_SYSTEM}=1 to use ffmpeg and a JavaScript runtime from your PATH instead"
 
@@ -111,9 +121,14 @@ class _BlobModule(Protocol):
     FILES: dict[str, bytes]
 
 
+def overrides_allowed() -> bool:
+    """Test/sandbox environment overrides apply outside a frozen build, or when opted in."""
+    return not getattr(sys, "frozen", False) or os.environ.get(ENV_ALLOW_OVERRIDES) == "1"
+
+
 def bundle_source() -> Source | None:
     """The embedded-files source, or ``None`` outside a bundled build."""
-    override = os.environ.get(ENV_BUNDLE_DIR)
+    override = os.environ.get(ENV_BUNDLE_DIR) if overrides_allowed() else None
     if override:
         p = Path(override)
         return DirSource(p) if (p / MANIFEST_NAME).is_file() else None
@@ -146,7 +161,7 @@ def load_manifest(source: Source) -> Manifest:
 
 
 def cache_root() -> Path:
-    override = os.environ.get(ENV_CACHE_DIR)
+    override = os.environ.get(ENV_CACHE_DIR) if overrides_allowed() else None
     if override:
         return Path(override)
     if sys.platform == "darwin":
@@ -165,9 +180,10 @@ def file_sha256(path: Path) -> str:
 
 def _is_valid(path: Path, asset: Asset) -> bool:
     try:
+        st = path.lstat()  # a symlink is never accepted
         return (
-            path.is_file()
-            and path.stat().st_size == asset.size
+            stat.S_ISREG(st.st_mode)
+            and st.st_size == asset.size
             and os.access(path, os.X_OK)
             and file_sha256(path) == asset.sha256
         )
@@ -177,15 +193,15 @@ def _is_valid(path: Path, asset: Asset) -> bool:
 
 def _adhoc_sign_if_needed(path: Path) -> None:
     """Re-apply an ad-hoc signature when the copy no longer verifies (arm64 kills unsigned code)."""
-    if sys.platform != "darwin" or shutil.which("codesign") is None:
+    if sys.platform != "darwin" or not os.access(CODESIGN, os.X_OK):
         return
     try:
         ok = subprocess.run(
-            ["codesign", "--verify", str(path)], capture_output=True, check=False, timeout=30
+            [CODESIGN, "--verify", str(path)], capture_output=True, check=False, timeout=30
         ).returncode
         if ok != 0:
             subprocess.run(
-                ["codesign", "--force", "--sign", "-", str(path)],
+                [CODESIGN, "--force", "--sign", "-", str(path)],
                 capture_output=True,
                 check=False,
                 timeout=30,
@@ -198,14 +214,55 @@ def _install(data: bytes, dst: Path, asset: Asset) -> None:
     """Atomically place a verified copy of ``data`` at ``dst`` (temp file + ``os.replace``)."""
     if hashlib.sha256(data).hexdigest() != asset.sha256:
         raise OSError(f"embedded {asset.name} does not match its recorded checksum")
-    tmp = dst.with_name(f".{dst.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+    tmp = dst.with_name(f".{dst.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp")
     try:
-        tmp.write_bytes(data)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(tmp, flags, 0o700)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
         tmp.chmod(0o755)
         _adhoc_sign_if_needed(tmp)
         os.replace(tmp, dst)
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def _private_dir(path: Path) -> None:
+    """Create ``path`` (and parents) if needed and require a private directory we own.
+
+    Raises :class:`OSError` for a symlink, a foreign owner or group/other-writable modes.
+    An existing directory of ours with looser modes is tightened to 0700.
+    """
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    st = path.lstat()
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+        raise OSError(f"{path} is not a plain directory")
+    if hasattr(os, "geteuid") and st.st_uid != os.geteuid():
+        raise OSError(f"{path} is owned by another user")
+    if st.st_mode & 0o077:
+        path.chmod(0o700)
+
+
+def _prune_stale(root: Path, keep: str) -> None:
+    """Best effort: remove old ``<version>-<sha8>`` cache dirs next to the current one."""
+    now = time.time()
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            st = entry.lstat()
+            if (
+                entry.name != keep
+                and stat.S_ISDIR(st.st_mode)
+                and not stat.S_ISLNK(st.st_mode)
+                and (not hasattr(os, "geteuid") or st.st_uid == os.geteuid())
+                and now - st.st_mtime > PRUNE_MIN_AGE_S
+            ):
+                shutil.rmtree(entry, ignore_errors=True)
+        except OSError:
+            continue
 
 
 def ensure_extracted(key: str, source: Source | None = None) -> Path:
@@ -221,13 +278,16 @@ def ensure_extracted(key: str, source: Source | None = None) -> Path:
     asset = manifest.assets.get(key)
     if asset is None:
         raise MissingDependency(f"{key} is not part of this build", hint=_HINT)
-    cache = cache_root() / manifest.cache_key
+    root = cache_root()
+    cache = root / manifest.cache_key
     dst = cache / asset.name
     if _is_valid(dst, asset):
         return dst
     try:
-        cache.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _private_dir(root)
+        _private_dir(cache)
         _install(src.read(asset.name), dst, asset)
+        _prune_stale(root, manifest.cache_key)
     except (OSError, KeyError) as exc:
         raise MissingDependency(
             f"could not extract the embedded {asset.name} to {cache} ({exc})", hint=_HINT

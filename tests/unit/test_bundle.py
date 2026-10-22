@@ -65,6 +65,7 @@ def test_frozen_build_reads_the_blob_module(
     blob.FILES = {n: (d / n).read_bytes() for n in ("ffmpeg", "qjs")}  # type: ignore[attr-defined]
     monkeypatch.delenv("XTRACTOR_BUNDLE_DIR")
     monkeypatch.setattr("sys.frozen", True, raising=False)
+    monkeypatch.setenv("XTRACTOR_ALLOW_OVERRIDES", "1")  # the cache override is test-only
     monkeypatch.setitem(sys.modules, "xtractor_blob", blob)
     path = bundle.bundled_asset_path("ffmpeg")
     assert path is not None
@@ -254,3 +255,96 @@ def test_adhoc_sign_runs_only_when_verify_fails(
     monkeypatch.setattr(bundle.subprocess, "run", ok_run)
     bundle._adhoc_sign_if_needed(tmp_path / "x")
     assert [c[1] for c in calls] == ["--verify"]
+
+
+def test_overrides_are_inert_in_frozen_builds(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("XTRACTOR_ALLOW_OVERRIDES", raising=False)
+    monkeypatch.setattr("sys.frozen", True, raising=False)
+    monkeypatch.delitem(sys.modules, "xtractor_blob", raising=False)
+    assert not bundle.overrides_allowed()
+    assert bundle.bundle_source() is None  # XTRACTOR_BUNDLE_DIR ignored
+    assert bundle.cache_root() != env  # XTRACTOR_CACHE_DIR ignored
+    monkeypatch.setenv("XTRACTOR_ALLOW_OVERRIDES", "1")
+    assert bundle.bundle_source() is not None
+    assert bundle.cache_root() == env
+
+
+def test_cache_dirs_are_private(env: Path) -> None:
+    env.mkdir(mode=0o777)
+    env.chmod(0o777)
+    path = bundle.bundled_asset_path("ffmpeg")
+    assert path is not None
+    assert env.stat().st_mode & 0o777 == 0o700
+    assert path.parent.stat().st_mode & 0o777 == 0o700
+
+
+def test_symlinked_cache_root_is_refused(env: Path, tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    env.symlink_to(real)
+    with pytest.raises(MissingDependency):
+        bundle.bundled_asset_path("ffmpeg")
+    assert not list(real.iterdir())
+
+
+def test_foreign_owner_is_refused(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env.mkdir(mode=0o700)
+    monkeypatch.setattr(os, "geteuid", lambda: os.stat(env).st_uid + 1)
+    with pytest.raises(MissingDependency):
+        bundle.bundled_asset_path("ffmpeg")
+
+
+def test_planted_symlink_at_tmp_name_is_not_followed(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    victim = tmp_path / "victim"
+    victim.write_text("KEEP")
+    monkeypatch.setattr(bundle.secrets, "token_hex", lambda n: "0" * 16)
+    cache = env / bundle.load_manifest(bundle.bundle_source()).cache_key  # type: ignore[arg-type]
+    cache.mkdir(parents=True, mode=0o700)
+    (cache / f".ffmpeg.{os.getpid()}.{'0' * 16}.tmp").symlink_to(victim)
+    with pytest.raises(MissingDependency):
+        bundle.bundled_asset_path("ffmpeg")
+    assert victim.read_text() == "KEEP"
+
+
+def test_symlinked_executable_is_not_valid(env: Path, tmp_path: Path) -> None:
+    path = bundle.bundled_asset_path("ffmpeg")
+    assert path is not None
+    real = tmp_path / "real-ffmpeg"
+    real.write_bytes(path.read_bytes())
+    real.chmod(0o755)
+    path.unlink()
+    path.symlink_to(real)
+    fixed = bundle.bundled_asset_path("ffmpeg")
+    assert fixed is not None
+    assert not fixed.is_symlink()
+
+
+def test_stale_cache_dirs_are_pruned(env: Path) -> None:
+    env.mkdir(mode=0o700)
+    old = env / "0.0.1-deadbeef"
+    old.mkdir()
+    (old / "ffmpeg").write_text("x")
+    recent = env / "0.0.2-cafebabe"
+    recent.mkdir()
+    ancient = time_ago = os.stat(old).st_mtime - 7200
+    os.utime(old, (ancient, time_ago))
+    path = bundle.bundled_asset_path("ffmpeg")
+    assert path is not None
+    assert not old.exists()  # stale and older than the grace period
+    assert recent.exists()  # too young: another version may be running
+    assert path.exists()
+
+
+def test_codesign_is_absolute(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    class R:
+        returncode = 1
+
+    monkeypatch.setattr(bundle.sys, "platform", "darwin")
+    monkeypatch.setattr(bundle.os, "access", lambda *a, **k: True)
+    monkeypatch.setattr(bundle.subprocess, "run", lambda argv, **k: (calls.append(argv), R())[1])
+    bundle._adhoc_sign_if_needed(tmp_path / "x")
+    assert [c[0] for c in calls] == ["/usr/bin/codesign"] * 2

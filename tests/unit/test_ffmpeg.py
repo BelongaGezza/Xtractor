@@ -24,7 +24,18 @@ def argv_for(fmt: str, rate: int, br: str | None = None, *, tags: Tags = TAGS) -
     )
 
 
-HEAD = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", "/t/src.m4a"]
+HEAD = [
+    "ffmpeg",
+    "-nostdin",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-y",
+    "-protocol_whitelist",
+    "file,pipe",
+    "-i",
+    "/t/src.m4a",
+]
 MAP = ["-vn", "-map", "0:a:0", "-map_metadata", "-1"]
 META = [
     "-metadata",

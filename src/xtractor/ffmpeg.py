@@ -67,6 +67,8 @@ def build_audio_argv(
         "-loglevel",
         "error",
         "-y",
+        "-protocol_whitelist",
+        "file,pipe",
         "-i",
         str(src),
         "-vn",
