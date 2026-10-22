@@ -86,7 +86,6 @@ def test_update_formula_rejects_hostile_versions(tmp_path: Path) -> None:
     import shutil
     import subprocess
 
-    UPDATE = _script("packaging/homebrew/update_formula.sh")
     (tmp_path / "t").write_bytes(b"x")
     formula = tmp_path / "f.rb"
     shutil.copy(_script("packaging/homebrew/xtractor.rb"), formula)
