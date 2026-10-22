@@ -6,6 +6,7 @@ yt-dlp info dict; ``from_dict`` is the single mapping point.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -14,6 +15,7 @@ from .errors import FormatUnavailable, VideoUnavailable
 from .options import AudioOptions, VideoOptions
 
 DEFAULT_LOSSY_BITRATE = "128k"
+_NOMINAL_RE = re.compile(r"^(\d{3,4})p")
 AUDIO_EXT = {"m4a": "m4a", "mp3": "mp3", "opus": "opus", "flac": "flac", "wav": "wav"}
 
 
@@ -42,20 +44,26 @@ class FormatInfo:
             v = num(key)
             return int(v) if v is not None else None
 
+        # Letterboxed videos report e.g. height=818 for the "1080p" rung. Users think in
+        # the nominal rung, so prefer the number in format_note ("1080p", "720p60").
+        note = str(d.get("format_note") or "")
+        nominal = _NOMINAL_RE.match(note)
+        height = int(nominal.group(1)) if nominal else integer("height")
+
         size = integer("filesize") or integer("filesize_approx")
         return cls(
             format_id=str(d.get("format_id", "")),
             ext=str(d.get("ext") or ""),
             vcodec=str(d.get("vcodec") or "none"),
             acodec=str(d.get("acodec") or "none"),
-            height=integer("height"),
+            height=height,
             fps=num("fps"),
             asr=integer("asr"),
             abr=num("abr"),
             tbr=num("tbr"),
             has_drm=bool(d.get("has_drm")),
             filesize=size,
-            note=str(d.get("format_note") or ""),
+            note=note,
         )
 
     # -- classification ---------------------------------------------------

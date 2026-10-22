@@ -118,6 +118,14 @@ _UNAVAILABLE_PATTERNS = (
     "is live",
 )
 
+_FS_PATTERNS = (
+    "no space left on device",
+    "disk quota exceeded",
+    "permission denied",
+    "read-only file system",
+    "file name too long",
+)
+
 _NETWORK_PATTERNS = (
     "http error 429",
     "http error 5",
@@ -207,6 +215,12 @@ def classify_exception(exc: BaseException, *, video_id: str | None = None) -> Xt
         "not found" in low or "not installed" in low or "is not available" in low
     ):
         return MissingDependency("ffmpeg was not found", hint=ffmpeg_install_hint())
+
+    if isinstance(inner, OSError) and inner.errno in _FS_ERRNOS:
+        where = f" ({inner.filename})" if inner.filename else ""
+        return FileSystemError(f"{inner.strerror or text}{where}")
+    if any(p in low for p in _FS_PATTERNS):
+        return FileSystemError(_clean_ytdlp_message(text))
 
     is_yt_error = bool(names & {"DownloadError", "ExtractorError", "GeoRestrictedError"})
     if is_yt_error or "UnavailableVideoError" in names:

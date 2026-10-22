@@ -310,3 +310,19 @@ def test_video_ignores_drm() -> None:
 
 
 STORYBOARD_ONLY = FormatInfo(format_id="sb0", ext="mhtml", height=90)
+
+
+def test_from_dict_uses_nominal_rung_for_letterboxed_video() -> None:
+    """Live finding: a 1080p rung of a 2.39:1 film reports height=818 but note '1080p'."""
+    from xtractor.formats import FormatInfo
+
+    f = FormatInfo.from_dict({"format_id": "137", "height": 818, "format_note": "1080p"})
+    assert f.height == 1080
+    assert (
+        FormatInfo.from_dict({"format_id": "x", "height": 720, "format_note": "720p60"}).height
+        == 720
+    )
+    assert FormatInfo.from_dict({"format_id": "x", "height": 546}).height == 546
+    assert (
+        FormatInfo.from_dict({"format_id": "x", "height": 546, "format_note": "low"}).height == 546
+    )
