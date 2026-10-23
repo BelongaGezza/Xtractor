@@ -6,8 +6,10 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0-rc.1] - 2026-10-23
+
 ### Added
-- Core features (version 0.1.0, not yet released): audio extraction (`-a`: m4a, mp3, opus,
+- Core features (first release candidate): audio extraction (`-a`: m4a, mp3, opus,
   flac, wav, stream copy where possible), video download (`-v`: mp4, mkv, webm up to 2160p and
   `best`), `--list-formats`, filename templates, atomic writes and clean Ctrl-C handling, and a
   single self-contained arm64 macOS binary with bundled ffmpeg and JavaScript runtime.
