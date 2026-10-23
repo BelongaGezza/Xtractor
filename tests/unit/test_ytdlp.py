@@ -120,7 +120,10 @@ def test_params_are_accepted_by_real_yt_dlp() -> None:
         def debug(self, m: str) -> None: ...
         def info(self, m: str) -> None: ...
         def warning(self, m: str) -> None:
-            warnings.append(m)
+            # yt-dlp nags on Python 3.10 ("Deprecated Feature: Support for Python version 3.10
+            # has been deprecated"); that is environment noise, not a bad option.
+            if "Deprecated Feature" not in m:
+                warnings.append(m)
 
         def error(self, m: str) -> None:
             warnings.append(m)

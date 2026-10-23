@@ -243,6 +243,8 @@ def test_adhoc_sign_runs_only_when_verify_fails(
 
     monkeypatch.setattr("sys.platform", "darwin")
     monkeypatch.setattr(bundle.shutil, "which", lambda n: "/usr/bin/codesign")
+    # codesign does not exist on Linux runners; pretend it is executable everywhere.
+    monkeypatch.setattr(bundle.os, "access", lambda *a, **k: True)
     monkeypatch.setattr(bundle.subprocess, "run", fake_run)
     bundle._adhoc_sign_if_needed(tmp_path / "x")
     assert [c[1] for c in calls] == ["--verify", "--force"]
