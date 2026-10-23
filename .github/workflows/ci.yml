@@ -19,7 +19,7 @@ jobs:
         os: [macos-14, ubuntu-latest]
         python: ["3.10", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -36,7 +36,7 @@ jobs:
         run: brew install ffmpeg
       - name: Install ffmpeg (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - run: python -m pip install -c constraints-ci.txt -e ".[dev]"
       - run: ruff check .
       - run: ruff format --check .
