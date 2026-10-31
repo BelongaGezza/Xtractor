@@ -24,6 +24,9 @@ permissions:
 jobs:
   build:
     runs-on: macos-26
+    env:
+      # Pin the floor so a newer runner image doesn't raise it; matches scripts/build_ffmpeg.sh.
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
