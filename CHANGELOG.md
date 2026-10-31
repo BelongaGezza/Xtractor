@@ -6,6 +6,14 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0-rc.2] - 2026-10-31
+
+### Changed
+- CI and release workflows run on `macos-26` (`macos-14` retires 2026-11-02); the release build
+  pins `MACOSX_DEPLOYMENT_TARGET=14.0`.
+- GitHub Actions bumped: checkout 7, setup-python 7, upload-artifact 7, download-artifact 8,
+  attest-build-provenance 4.
+
 ## [0.1.0-rc.1] - 2026-10-23
 
 ### Added
