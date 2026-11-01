@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -132,15 +133,26 @@ class _PinnedRedirects(urllib.request.HTTPRedirectHandler):
         return new
 
 
+def _ssl_context() -> ssl.SSLContext:
+    """Verify against certifi's CA bundle when present: a frozen build has no system store."""
+    try:
+        import certifi
+    except ImportError:
+        return ssl.create_default_context()
+    return ssl.create_default_context(cafile=certifi.where())
+
+
 class UrllibFetcher:
-    """Real HTTPS fetcher (stdlib only): pinned hosts, https-only redirects, size/time caps."""
+    """Real HTTPS fetcher: pinned hosts, https-only redirects, size/time caps."""
 
     def _open(self, url: str) -> Any:
         check_url(url)
         headers = {"User-Agent": USER_AGENT}
         if urllib.parse.urlsplit(url).hostname == "api.github.com":
             headers["Accept"] = "application/vnd.github+json"
-        opener = urllib.request.build_opener(_PinnedRedirects)
+        opener = urllib.request.build_opener(
+            _PinnedRedirects, urllib.request.HTTPSHandler(context=_ssl_context())
+        )
         return opener.open(urllib.request.Request(url, headers=headers), timeout=TIMEOUT_S)
 
     def get_json(self, url: str) -> Any:
@@ -324,10 +336,14 @@ class SelfUpdater:
         if repo != DEFAULT_REPO:
             self.log(f"Using update repository {repo} ({REPO_ENV} override)")
 
-        release = _net(
-            "checking for updates",
-            lambda: self.fetcher.get_json(f"https://api.github.com/repos/{repo}/releases/latest"),
+        # /releases/latest skips prereleases, so a prerelease build looks at the full list.
+        prerelease = parse_version(self.current_version)[3] == 0
+        url = f"https://api.github.com/repos/{repo}/releases" + (
+            "?per_page=10" if prerelease else "/latest"
         )
+        release = _net("checking for updates", lambda: self.fetcher.get_json(url))
+        if prerelease:
+            release = _newest_release(release)
         tag, assets = _read_release(release)
         if not is_newer(tag, self.current_version):
             self.log(f"Xtractor {self.current_version} is already up to date")
@@ -426,6 +442,22 @@ class SelfUpdater:
                 ) from exc
             raise InternalError("the updated binary failed verification; rolled back")
         self.log(f"Previous version kept at {backup}")
+
+
+def _newest_release(releases: Any) -> Any:
+    """The highest-versioned published release in a ``/releases`` listing."""
+    best: Any = None
+    best_key: VersionKey | None = None
+    for r in releases if isinstance(releases, list) else []:
+        tag = r.get("tag_name") if isinstance(r, dict) else None
+        if not isinstance(tag, str) or r.get("draft") or not _VERSION_RE.match(tag):
+            continue
+        key = parse_version(tag)
+        if best_key is None or key > best_key:
+            best, best_key = r, key
+    if best is None:
+        raise InternalError("unexpected response from the GitHub releases API")
+    return best
 
 
 def _read_release(release: Any) -> tuple[str, dict[str, str]]:

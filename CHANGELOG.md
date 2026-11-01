@@ -6,6 +6,14 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0-rc.3] - 2026-11-01
+
+### Fixed
+- `--self-update` failed in the release binary with `CERTIFICATE_VERIFY_FAILED`: the frozen build has
+  no system CA store. It now verifies against the bundled `certifi` CA file.
+- `--self-update` on a prerelease build could not see any release (`/releases/latest` skips
+  prereleases); it now picks the newest published release from the release list.
+
 ## [0.1.0-rc.2] - 2026-10-31
 
 ### Changed

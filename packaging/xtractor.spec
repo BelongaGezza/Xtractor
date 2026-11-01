@@ -24,6 +24,10 @@ assert (BUNDLE / "manifest.json").is_file(), f"stage the tools first: {BUNDLE}"
 # yt-dlp-ejs ships the JS challenge solver as package data (spike gotcha 3: mandatory).
 ejs_datas, ejs_binaries, ejs_hidden = collect_all("yt_dlp_ejs")
 
+# --self-update verifies GitHub's TLS certificate against certifi's CA bundle (a frozen
+# build has no system store for stdlib ssl to find).
+certifi_datas, certifi_binaries, certifi_hidden = collect_all("certifi")
+
 # yt-dlp loads these by name (mirrors yt-dlp's own bundle/pyinstaller.py), and the
 # extractor/postprocessor/downloader registries are discovered dynamically.
 hidden = [
@@ -33,6 +37,7 @@ hidden = [
     "yt_dlp.utils._deprecated",
     *collect_submodules("yt_dlp", filter=lambda name: "__pyinstaller" not in name),
     *ejs_hidden,
+    *certifi_hidden,
 ]
 
 # The tools travel inside the generated module xtractor_blob (see release_tools.py), which
@@ -102,8 +107,8 @@ excludes = [
 a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],
     pathex=[str(ROOT / "src"), str(BLOB_DIR)],
-    binaries=ejs_binaries,
-    datas=ejs_datas,
+    binaries=ejs_binaries + certifi_binaries,
+    datas=ejs_datas + certifi_datas,
     hiddenimports=hidden,
     hookspath=[],
     runtime_hooks=[],

@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import sys
 import tarfile
+import types
 import urllib.error
 from pathlib import Path
 from typing import Any
@@ -80,6 +82,8 @@ class FakeFetcher:
         self.urls.append(url)
         if self.error:
             raise self.error
+        if "/releases?" in url and not isinstance(self.release, list):
+            return [self.release]  # prerelease builds read the release listing
         return self.release
 
     def download(self, url: str, dest: Path, max_bytes: int) -> None:
@@ -160,6 +164,23 @@ def test_update_replaces_binary_and_keeps_backup(exe: Path) -> None:
     assert not [p for p in exe.parent.iterdir() if p.name.startswith(".")]  # staging cleaned
     assert exe.stat().st_mode & 0o777 == 0o755
     assert f.urls[0] == f"https://api.github.com/repos/{REPO}/releases/latest"
+
+
+def test_prerelease_build_picks_newest_from_release_list(exe: Path) -> None:
+    f = FakeFetcher()
+    newest = f.release
+    stale = {"tag_name": "v1.0.0-rc.1", "assets": []}
+    draft = {"tag_name": "v9.9.9", "draft": True, "assets": []}
+    f.release = [stale, draft, newest]  # type: ignore[assignment]
+    assert updater(f, exe, current_version="1.0.0-rc.1").run() == NEW
+    assert f.urls[0] == f"https://api.github.com/repos/{REPO}/releases?per_page=10"
+
+
+def test_prerelease_build_with_empty_list_is_an_error(exe: Path) -> None:
+    f = FakeFetcher()
+    f.release = []  # type: ignore[assignment]
+    with pytest.raises(InternalError):
+        updater(f, exe, current_version="1.0.0-rc.1").run()
 
 
 def test_up_to_date_does_not_download(exe: Path) -> None:
@@ -547,6 +568,17 @@ def test_open_pins_url_and_sets_accept(monkeypatch: pytest.MonkeyPatch) -> None:
     assert seen[0][0].get_header("Accept") == "application/vnd.github+json"
     f._open("https://github.com/x")
     assert not seen[1][0].has_header("Accept")
+
+
+def test_ssl_context_uses_certifi_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[Any] = []
+    fake = types.SimpleNamespace(where=lambda: "/ca.pem")
+    monkeypatch.setitem(sys.modules, "certifi", fake)
+    monkeypatch.setattr(
+        selfupdate.ssl, "create_default_context", lambda **kw: seen.append(kw) or "ctx"
+    )
+    assert selfupdate._ssl_context() == "ctx"
+    assert seen == [{"cafile": "/ca.pem"}]
 
 
 # --- codesign / smoke test ---------------------------------------------------------------
