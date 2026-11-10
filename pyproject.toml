@@ -9,7 +9,7 @@ description = "Extract the audio or video track from a YouTube video."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-authors = [{ name = "Gerry Gillies" }]
+authors = [{ name = "BelongaGezza" }]
 classifiers = [
     "Environment :: Console",
     "License :: OSI Approved :: MIT License",
