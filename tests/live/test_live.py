@@ -37,6 +37,10 @@ def probe(path: Path) -> dict[str, Any]:
 def run_main(capsys: pytest.CaptureFixture[str], *args: str) -> tuple[int, str, str]:
     code = main([*args, URL])
     cap = capsys.readouterr()
+    if code != 0 and "not a bot" in cap.err:
+        # Datacenter IPs (e.g. GitHub runners) are bot-checked by YouTube. That is an
+        # environment block, not an extractor regression, so it must not fail the canary.
+        pytest.skip(f"YouTube bot check blocked this network: {cap.err.strip()}")
     return code, cap.out, cap.err
 
 
