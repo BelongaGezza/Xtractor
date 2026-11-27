@@ -26,7 +26,21 @@ jobs:
       - name: Live tests
         env:
           XTRACTOR_LIVE: "1"
-        run: pytest -m live tests/live -ra
+        run: pytest -m live tests/live -ra --junitxml=live-results.xml
+      - name: Fail if no live test actually ran
+        # A bot-check skip is green in pytest, so a skip-only run would hide breakage.
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse("live-results.xml").getroot()
+          suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
+          total = sum(int(s.get("tests", 0)) for s in suites)
+          skipped = sum(int(s.get("skipped", 0)) for s in suites)
+          ran = total - skipped
+          print(f"live tests: {total} collected, {skipped} skipped, {ran} ran")
+          if ran == 0:
+              raise SystemExit("No live test ran (all skipped, likely a YouTube bot check); the canary tested nothing.")
+          PY
       - name: Open an issue if not already present
         if: failure()
         env:
