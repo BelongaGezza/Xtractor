@@ -12,13 +12,14 @@ permissions:
 
 jobs:
   live:
-    runs-on: macos-26
+    # Self-hosted: GitHub-hosted runner IPs are bot-checked by YouTube, so every live test skips.
+    # Start the runner by hand: cd ~/actions-runner && ./run.sh (ephemeral, one job, re-run config.sh with a new token each time).
+    runs-on: [self-hosted, macOS, ARM64, xtractor-live]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
-      - run: brew install ffmpeg deno
       - run: python -m pip install -e ".[dev]"
       - run: python -m pip install --upgrade "yt-dlp[default]"
       - name: Show versions
